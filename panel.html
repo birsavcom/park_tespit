@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bursa Akıllı Otopark - Dark Neon</title>
+    <style>
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #000; /* Arxa fon qara */
+        }
+
+        /* XƏRİTƏNİ QARALTMAQ VƏ NEON EFFEKTİ VERMƏK ÜÇÜN FİLTER 
+           Bu hissə peyk görüntüsünü "Dark Mode" kimi göstərir.
+        */
+        #map {
+            height: 100%;
+            width: 100%;
+            touch-action: none;
+            filter: brightness(0.5) contrast(1.2) grayscale(0.2) saturate(1.2);
+        }
+
+        #price-panel {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 380px;
+
+            background: rgba(20, 20, 24, 0.75); /* Daha tünd fon */
+            backdrop-filter: blur(25px);
+            -webkit-backdrop-filter: blur(25px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+
+            padding: 20px;
+            border-radius: 24px;
+            box-shadow: 0 15px 50px rgba(0, 0, 0, 0.8);
+            z-index: 2000;
+            display: none;
+            color: #ffffff;
+            animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translate(-50%, 20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translate(-50%, 0);
+            }
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .location-title {
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-shadow: 0 0 10px rgba(255,255,255,0.3);
+        }
+
+        .p-icon {
+            background: #2979ff;
+            width: 24px;
+            height: 24px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 14px;
+            box-shadow: 0 0 10px #2979ff;
+        }
+
+        .status-badge {
+            font-size: 12px;
+            font-weight: 800;
+            padding: 4px 12px;
+            border-radius: 20px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* NEON STATUS RƏNGLƏRİ */
+        .status-dolu {
+            color: #ff003c;
+            background: rgba(255, 0, 60, 0.15);
+            border: 1px solid rgba(255, 0, 60, 0.3);
+            box-shadow: 0 0 8px rgba(255, 0, 60, 0.2);
+        }
+
+        .status-bos {
+            color: #00ff44;
+            background: rgba(0, 255, 68, 0.15);
+            border: 1px solid rgba(0, 255, 68, 0.3);
+            box-shadow: 0 0 8px rgba(0, 255, 68, 0.2);
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+            color: #ebebf5;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding-bottom: 8px;
+        }
+
+        .info-label {
+            color: #a0a0a0;
+        }
+
+        .info-value {
+            font-weight: 600;
+            text-shadow: 0 0 5px rgba(255,255,255,0.2);
+        }
+
+        /* Naviqasiya Düyməsi Neon */
+        .nav-btn {
+            background: linear-gradient(90deg, #0055ff, #00aaff);
+            color: white;
+            border: none;
+            width: 100%;
+            padding: 16px;
+            border-radius: 30px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 0 20px rgba(0, 136, 255, 0.4);
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .nav-btn:active {
+            transform: scale(0.96);
+            box-shadow: 0 0 10px rgba(0, 136, 255, 0.6);
+        }
+
+        .close-btn {
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #aaa;
+            width: 100%;
+            padding: 12px;
+            border-radius: 30px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 10px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        
+        .close-btn:hover {
+            background: rgba(255,255,255,0.05);
+            color: #fff;
+        }
+
+        .plaka-box {
+            font-family: 'Consolas', monospace;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 8px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            text-align: center;
+            margin-bottom: 15px;
+            color: #ffd700;
+            font-size: 18px;
+            letter-spacing: 2px;
+            text-shadow: 0 0 5px rgba(255, 215, 0, 0.5);
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="price-panel"></div>
+    <div id="map"></div>
+
+    <script>
+        const varsayilanMerkez = { lat: 40.226991369791286, lng: 28.84528824528653 };
+        let map, directionsService, directionsRenderer, sariRotaCizgisi, trafficLayer;
+        let kullaniciKonumu = varsayilanMerkez;
+        let sonKonum = null;
+        let seciliHedef = null;
+        let targetMarker = null;
+        let kullaniciMarker = null;
+
+        function initMap() {
+            map = new google.maps.Map(document.getElementById("map"), {
+                center: varsayilanMerkez,
+                zoom: 19,
+                mapTypeId: 'satellite',
+                // Bütün UI elementlərini gizlədirik (Şəkilə uyğun)
+                disableDefaultUI: true, 
+                gestureHandling: 'greedy',
+                // Etiketləri (POI) gizlət
+                styles: [
+                    { featureType: "poi", stylers: [{ visibility: "off" }] },
+                    { featureType: "transit", stylers: [{ visibility: "off" }] }
+                ]
+            });
+
+            // Trafik layını əlavə et (bu qaranlıq filterin altında incə görünəcək)
+            trafficLayer = new google.maps.TrafficLayer();
+            trafficLayer.setMap(map);
+
+            directionsService = new google.maps.DirectionsService();
+            directionsRenderer = new google.maps.DirectionsRenderer({
+                map: map,
+                suppressMarkers: true,
+                suppressPolylines: true
+            });
+
+            // Rota Xətti - NEON SARI
+            sariRotaCizgisi = new google.maps.Polyline({
+                strokeColor: "#ffea00", // Daha parlaq sarı
+                strokeOpacity: 1.0,
+                strokeWeight: 6,
+                map: map,
+                zIndex: 500
+            });
+
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(
+                    (p) => {
+                        const yeniKonum = { lat: p.coords.latitude, lng: p.coords.longitude };
+                        if (sonKonum && mesafeHesapla(sonKonum, yeniKonum) < 2) return;
+
+                        kullaniciKonumu = yeniKonum;
+                        sonKonum = yeniKonum;
+
+                        if (!kullaniciMarker) {
+                            kullaniciMarker = new google.maps.Marker({
+                                position: yeniKonum,
+                                map: map,
+                                icon: {
+                                    path: google.maps.SymbolPath.CIRCLE,
+                                    scale: 10,
+                                    fillColor: "#00aaff",
+                                    fillOpacity: 1,
+                                    strokeColor: "white",
+                                    strokeWeight: 3
+                                }
+                            });
+                        } else {
+                            kullaniciMarker.setPosition(yeniKonum);
+                        }
+
+                        if (seciliHedef) rotaGuncelle();
+                    },
+                    null,
+                    { enableHighAccuracy: true, maximumAge: 3000 }
+                );
+            }
+
+            fetch('otoparklar.json').then(r => r.json()).then(data => {
+                data.forEach(park => {
+                    // Qaranlıq xəritədə görünməsi üçün parlaq NEON rənglər seçirik
+                    // Şəkildəki kimi: DOLU = Parlaq Qırmızı, BOŞ = Parlaq Yaşıl
+                    let strokeColor = park.status === "DOLU" ? "#ff003c" : "#00ff44";
+                    let fillColor = park.status === "DOLU" ? "#ff003c" : "#00ff44";
+
+                    let poly = new google.maps.Polygon({
+                        paths: park.coords,
+                        strokeColor: strokeColor,
+                        strokeOpacity: 1.0,
+                        strokeWeight: 4, // Xətt qalınlığı artırıldı
+                        fillColor: fillColor,
+                        fillOpacity: 0.1, // İçi çox şəffaf, sadəcə xətlər parlasın
+                        map: map,
+                        zIndex: 1000
+                    });
+
+                    google.maps.event.addListener(poly, 'mousedown', function () {
+                        seciliHedef = poligonMerkeziniBul(poly);
+                        rotaGuncelle();
+                        panelGoster(park);
+                    });
+                });
+            });
+        }
+
+        function rotaGuncelle() {
+            if (!seciliHedef) return;
+
+            directionsService.route({
+                origin: kullaniciKonumu,
+                destination: seciliHedef,
+                travelMode: google.maps.TravelMode.DRIVING,
+                drivingOptions: { departureTime: new Date(Date.now()), trafficModel: 'bestguess' }
+            }, (result, status) => {
+                if (status == 'OK') {
+                    let rawPath = result.routes[0].overview_path;
+                    let finalPoints = [];
+
+                    finalPoints.push(new google.maps.LatLng(kullaniciKonumu.lat, kullaniciKonumu.lng));
+                    for (let i = 0; i < rawPath.length; i++) {
+                        finalPoints.push(rawPath[i]);
+                    }
+                    finalPoints.push(new google.maps.LatLng(seciliHedef.lat, seciliHedef.lng));
+
+                    sariRotaCizgisi.setPath(finalPoints);
+
+                    if (targetMarker) targetMarker.setMap(null);
+                    targetMarker = new google.maps.Marker({
+                        position: seciliHedef,
+                        map: map,
+                        animation: google.maps.Animation.DROP
+                    });
+                }
+            });
+        }
+
+        function mesafeHesapla(k1, k2) {
+            const R = 6371e3;
+            const dLat = (k2.lat - k1.lat) * Math.PI / 180;
+            const dLng = (k2.lng - k1.lng) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(k1.lat * Math.PI / 180) * Math.cos(k2.lat * Math.PI / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        function poligonMerkeziniBul(polygon) {
+            let path = polygon.getPath();
+            let x = 0, y = 0, n = path.getLength();
+            for (let i = 0; i < n; i++) { x += path.getAt(i).lat(); y += path.getAt(i).lng(); }
+            return { lat: x / n, lng: y / n };
+        }
+
+        function ucretHesapla(ts) {
+            if (!ts) ts = new Date().getTime();
+            const fark = Math.ceil((new Date() - new Date(ts)) / 3600000);
+            let u = 0;
+            if (fark == 2) u = 150; else if (fark == 3) u = 200; else if (fark > 3) u = 200 + (fark - 3) * 100;
+            return { ucret: u, saat: fark };
+        }
+
+        function panelGoster(park) {
+            const p = document.getElementById("price-panel");
+            const res = ucretHesapla(park.giris_timestamp);
+
+            const durumText = park.status || "DOLU";
+            const durumClass = durumText === "BOŞ" ? "status-bos" : "status-dolu";
+            const baslik = park.bolge_adi || "A-12 BÖLGESİ";
+
+            // Şəkilə uyğun Glassmorphism Panel
+            p.innerHTML = `
+                <div class="panel-header">
+                    <div class="location-title">
+                        <div class="p-icon">P</div>
+                        ${baslik}
+                    </div>
+                    <span class="status-badge ${durumClass}">${durumText}</span>
+                </div>
+
+                ${park.plaka ? `<div class="plaka-box">${park.plaka}</div>` : ''}
+
+                <div class="info-grid">
+                    <div class="info-row">
+                        <span class="info-label">Mesafe</span>
+                        <span class="info-value">23,0 km</span> </div>
+                    <div class="info-row">
+                        <span class="info-label">Süre</span>
+                        <span class="info-value">${res.saat} Saat (Canlı)</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Ücret</span>
+                        <span class="info-value" style="color: #00ff44">${res.ucret} TL</span>
+                    </div>
+                     <div class="info-row">
+                        <span class="info-label">Giriş Saati</span>
+                        <span class="info-value">${park.giris_saati || '--:--'}</span>
+                    </div>
+                </div>
+
+                <button class="nav-btn" onclick="alert('Naviqasiya başladılır...')">
+                    NAVİGASYONU BAŞLAT &#10140;
+                </button>
+                <button class="close-btn" onclick="document.getElementById('price-panel').style.display='none'">
+                    KAPAT
+                </button>
+            `;
+
+            p.style.display = "block";
+        }
+    </script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDCXI_xRr4jgzkwtDrH7w9Wk8DQuojMJn0&callback=initMap"
+        async defer></script>
+</body>
+</html>

@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bursa Akıllı Otopark - Neon Style</title>
+    <style>
+        html,
+        body {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #000;
+        }
+
+        #map {
+            height: 100%;
+            width: 100%;
+            transition: filter 0.3s ease;
+        }
+
+        /* UYDU Modu: Karartılmış */
+        .uydu-modu {
+            filter: brightness(0.4) contrast(1.2) saturate(1.1);
+        }
+
+        /* HARİTA Modu: Net Siyah */
+        .harita-modu {
+            filter: none;
+        }
+
+        #price-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 90%;
+            max-width: 380px;
+            background: rgba(15, 15, 15, 0.95);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 24px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.95);
+            z-index: 2000;
+            display: none;
+            color: #ffffff;
+            animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: start;
+            align-items: start;
+            margin-bottom: 15px;
+        }
+
+        .location-title {
+            font-size: 18px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .p-icon {
+            background: #2979ff;
+            width: 24px;
+            height: 24px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .status-badge {
+            font-size: 12px;
+            font-weight: 800;
+            padding: 4px 12px;
+            border-radius: 20px;
+        }
+
+        .status-dolu {
+            color: #FF5A5F;
+            background: rgba(255, 90, 95, 0.15);
+            border: 1px solid rgba(255, 90, 95, 0.5);
+        }
+
+        .status-bos {
+            color: #00ff44;
+            background: rgba(0, 255, 68, 0.15);
+            border: 1px solid rgba(0, 255, 68, 0.4);
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+            color: #ebebf5;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding-bottom: 8px;
+        }
+
+        .nav-btn {
+            background: linear-gradient(90deg, #0055ff, #00aaff);
+            color: white;
+            border: none;
+            width: 100%;
+            padding: 16px;
+            border-radius: 30px;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .close-btn {
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #aaa;
+            width: 100%;
+            padding: 12px;
+            border-radius: 30px;
+            margin-top: 10px;
+            cursor: pointer;
+        }
+
+        .plaka-box {
+            font-family: 'Consolas', monospace;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 8px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            text-align: center;
+            margin-bottom: 15px;
+            color: #ffd700;
+            font-size: 18px;
+            letter-spacing: 2px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="price-panel"></div>
+    <div id="map" class="uydu-modu"></div>
+
+    <script>
+        // GLOBAL DEĞİŞKENLER (Tek seferde tanımlandı)
+        const varsayilanMerkez = { lat: 40.226991369791286, lng: 28.84528824528653 };
+        let map, directionsService, directionsRenderer, sariRotaCizgisi, trafficLayer;
+        let kullaniciKonumu = varsayilanMerkez;
+        let sonKonum = null;
+        let seciliHedef = null;
+        let targetMarker = null;
+        let kullaniciMarker = null;
+        let parkMarkers = [];
+
+        // 1. İKON ÜRETİCİ: Yazıyı arabanın içine gömen ve yönüyle beraber döndüren fonksiyon
+        // 1. İKON ÜRETİCİ: Boyutu hafif büyütülmüş araç tasarımı
+        function getCarIconSVG(text, color, zoom) {
+            const scale = getScaleByZoom(zoom);
+            // Yazı boyutunu zoom'a göre ayarla
+            const fontSize = zoom >= 21 ? 14 : (zoom >= 20 ? 12 : (zoom >= 19 ? 10 : 8));
+            
+            const svg = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="100" height="50" viewBox="0 0 100 50">
+                <path d="M 32,5 L 28,2 Q 26,2 26,5 Z" fill="black" stroke="${color}" stroke-width="1.2" /> 
+                <path d="M 32,45 L 28,48 Q 26,48 26,45 Z" fill="black" stroke="${color}" stroke-width="1.2" /> 
+
+                <path d="M 20,5 L 80,5 Q 95,5 95,15 L 95,35 Q 95,45 80,45 L 20,45 Q 5,45 5,35 L 5,15 Q 5,5 20,5 M 25,10 L 25,40 M 70,10 L 70,40 M 30,8 L 65,8 Q 75,8 75,15 L 75,35 Q 75,42 65,42 L 30,42 Q 20,42 20,35 L 20,15 Q 20,8 30,8" 
+                      fill="black" stroke="${color}" stroke-width="2.5" />
+
+                <line x1="93" y1="10" x2="93" y2="18" stroke="${color}" stroke-width="3" stroke-linecap="round" /> 
+                <line x1="93" y1="32" x2="93" y2="40" stroke="${color}" stroke-width="3" stroke-linecap="round" />
+
+                <line x1="7" y1="10" x2="7" y2="18" stroke="${color}" stroke-width="3" stroke-linecap="round" />
+                <line x1="7" y1="32" x2="7" y2="40" stroke="${color}" stroke-width="3" stroke-linecap="round" />
+
+                <text x="50" y="28" fill="${color}" font-family="monospace" font-weight="900" font-size="${fontSize}" 
+                      text-anchor="middle" dominant-baseline="middle">${text}</text>
+            </svg>`;
+
+            // Boyut Çarpanı Düzenlendi: 0.4 -> 0.5 (Araçlar hafif büyüdü)
+            const sizeMultiplier = 0.5;
+
+            return {
+                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+                scaledSize: new google.maps.Size(100 * scale * sizeMultiplier, 50 * scale * sizeMultiplier),
+                anchor: new google.maps.Point(50 * scale * sizeMultiplier, 25 * scale * sizeMultiplier)
+            };
+        }
+
+        // SİYAH TEMA AYARLARI
+        const pitchBlackStyle = [
+            { elementType: "geometry", stylers: [{ color: "#101010" }] },
+            { elementType: "labels.text.stroke", stylers: [{ color: "#101010" }] },
+            { elementType: "labels.text.fill", stylers: [{ color: "#808080" }] },
+            { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#bfbfbf" }] },
+            { featureType: "poi", stylers: [{ visibility: "off" }] },
+            { featureType: "road", elementType: "geometry", stylers: [{ color: "#252525" }] },
+            { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#151515" }] },
+            { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#666666" }] },
+            { featureType: "water", elementType: "geometry", stylers: [{ color: "#000000" }] },
+            { featureType: "transit", stylers: [{ visibility: "off" }] }
+        ];
+
+        function initMap() {
+            const mapElement = document.getElementById("map");
+
+            map = new google.maps.Map(mapElement, {
+                center: varsayilanMerkez,
+                zoom: 19,
+                mapTypeId: 'satellite',
+                disableDefaultUI: true,
+                mapTypeControl: true,
+                mapTypeControlOptions: {
+                    style: google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
+                    position: google.maps.ControlPosition.LEFT_TOP
+                },
+                gestureHandling: 'greedy',
+                styles: pitchBlackStyle
+            });
+
+            // Uydu/Harita görünüm geçiş dinleyicisi
+            map.addListener('maptypeid_changed', () => {
+                const currentType = map.getMapTypeId();
+                if (currentType === 'satellite' || currentType === 'hybrid') {
+                    mapElement.classList.add('uydu-modu');
+                    mapElement.classList.remove('harita-modu');
+                } else {
+                    mapElement.classList.remove('uydu-modu');
+                    mapElement.classList.add('harita-modu');
+                }
+            });
+
+            trafficLayer = new google.maps.TrafficLayer();
+            trafficLayer.setMap(map);
+
+            directionsService = new google.maps.DirectionsService();
+            directionsRenderer = new google.maps.DirectionsRenderer({
+                map: map, suppressMarkers: true, suppressPolylines: true
+            });
+
+            sariRotaCizgisi = new google.maps.Polyline({
+                strokeColor: "#ffea00", strokeOpacity: 1.0, strokeWeight: 6, map: map, zIndex: 500
+            });
+
+            // Kullanıcı Konum Takibi
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(
+                    (p) => {
+                        const yeniKonum = { lat: p.coords.latitude, lng: p.coords.longitude };
+                        if (sonKonum && mesafeHesapla(sonKonum, yeniKonum) < 2) return;
+                        kullaniciKonumu = yeniKonum;
+                        sonKonum = yeniKonum;
+
+                        if (!kullaniciMarker) {
+                            kullaniciMarker = new google.maps.Marker({
+                                position: yeniKonum, map: map,
+                                icon: {
+                                    path: google.maps.SymbolPath.CIRCLE, scale: 10, fillColor: "#00aaff", fillOpacity: 1, strokeColor: "white", strokeWeight: 3
+                                }
+                            });
+                        } else {
+                            kullaniciMarker.setPosition(yeniKonum);
+                        }
+                        if (seciliHedef) rotaGuncelle();
+                    }, null, { enableHighAccuracy: true, maximumAge: 3000 }
+                );
+            }
+
+            // OTOPARK VERİLERİ VE MARKER OLUŞTURMA
+            fetch('otoparklar.json').then(r => r.json()).then(data => {
+                data.forEach(park => {
+                    let parkIsmi = (park.name || park.status || "").toUpperCase();
+                    let isBos = parkIsmi.includes("BOS") || parkIsmi.includes("BOŞ");
+                    let renk = isBos ? "#00ff44" : "#FF5A5F";
+                    let yazi = isBos ? "BOŞ" : "DOLU";
+
+                    let merkez = koordinatMerkeziBul(park.coords);
+                    let rotasyon = parkYonuHesapla(park.coords);
+
+                    let arabaMarker = new google.maps.Marker({
+                        position: merkez,
+                        map: map,
+                        icon: getCarIconSVG(yazi, renk, map.getZoom()),
+                        // KRİTİK NOKTA: rotasyon değerine +90 ekliyoruz ki araba kutuya tam paralel olsun
+                        rotation: rotasyon + 90, 
+                        zIndex: 1000,
+                        statusText: yazi,
+                        statusColor: renk
+                    });
+
+                    parkMarkers.push(arabaMarker);
+
+                    arabaMarker.addListener('click', function () {
+                        seciliHedef = merkez;
+                        rotaGuncelle();
+                        panelGoster(park);
+                    });
+                });
+            });
+
+            // ZOOM DİNLEYİCİSİ: İkon ve yazı aynı anda ölçeklenir
+            map.addListener('zoom_changed', function () {
+                const currentZoom = map.getZoom();
+                parkMarkers.forEach(marker => {
+                    marker.setIcon(getCarIconSVG(
+                        currentZoom < 18 ? "" : marker.statusText, 
+                        marker.statusColor, 
+                        currentZoom
+                    ));
+                });
+            });
+        }
+
+        // --- YARDIMCI FONKSİYONLAR (HEPSİ KORUNDU) ---
+
+        function getScaleByZoom(zoom) {
+            // Yakınlaştıkça büyüyen mantıklı ölçek
+            if (zoom >= 21) return 1.5; 
+            if (zoom >= 20) return 1.1;
+            if (zoom >= 19) return 0.8;
+            if (zoom >= 18) return 0.4;
+            return 0.2;
+        }
+
+        function parkYonuHesapla(coords) {
+            if (!coords || coords.length < 2) return 0;
+            let maxDist = 0;
+            let pA, pB;
+
+        // 1. Kutunun en uzun kenarını bul (Boyuna hizalamak için)
+            for (let i = 0; i < coords.length; i++) {
+            let c1 = coords[i];
+            let c2 = coords[(i + 1) % coords.length];
+            let d = Math.sqrt(Math.pow(c2.lat - c1.lat, 2) + Math.pow(c2.lng - c1.lng, 2));
+            if (d > maxDist) {
+                maxDist = d;
+                pA = c1;
+                pB = c2;
+            }
+        }
+
+            // 2. İki nokta arasındaki açıyı (bearing) hesapla
+            // Google Maps bearing sisteminde 0 Kuzeydir, saat yönünde artar.
+            let angle = Math.atan2(pB.lng - pA.lng, pB.lat - pA.lat) * (180 / Math.PI);
+
+            // 3. Aracın kutu içinde simetrik durması için açıyı normalize et
+            if (angle > 90) angle -= 180;
+            if (angle < -90) angle += 180;
+
+            return angle; 
+        }
+
+        function koordinatMerkeziBul(coords) {
+            let latSum = 0, lngSum = 0;
+            coords.forEach(c => { latSum += c.lat; lngSum += c.lng; });
+            return { lat: latSum / coords.length, lng: lngSum / coords.length };
+        }
+
+        function rotaGuncelle() {
+            if (!seciliHedef) return;
+            directionsService.route({
+                origin: kullaniciKonumu,
+                destination: seciliHedef,
+                travelMode: google.maps.TravelMode.DRIVING,
+                drivingOptions: {
+                    departureTime: new Date(Date.now()),
+                    trafficModel: 'bestguess'
+                }
+            }, (result, status) => {
+                if (status == 'OK') {
+                    // 1. Google'ın bulduğu standart rota noktalarını alıyoruz
+                    let path = result.routes[0].overview_path;
+                    
+                    // 2. KRİTİK EKLEME: Rotanın en sonuna park alanının tam koordinatını ekliyoruz.
+                    // Bu işlem, sarı çizgiyi yoldan koparıp park alanının içine (imlece) bağlar.
+                    path.push(new google.maps.LatLng(seciliHedef.lat, seciliHedef.lng));
+                    
+                    // 3. Güncellenmiş yolu sarı çizgiye basıyoruz
+                    sariRotaCizgisi.setPath(path);
+                    
+                    if (targetMarker) targetMarker.setMap(null);
+                    targetMarker = new google.maps.Marker({
+                        position: seciliHedef,
+                        map: map,
+                        animation: google.maps.Animation.DROP
+                    });
+                }
+            });
+        }
+
+        function mesafeHesapla(k1, k2) {
+            const R = 6371e3;
+            const dLat = (k2.lat - k1.lat) * Math.PI / 180;
+            const dLng = (k2.lng - k1.lng) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(k1.lat * Math.PI / 180) * Math.cos(k2.lat * Math.PI / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        function ucretHesapla(ts) {
+            if (!ts) ts = new Date().getTime();
+            const fark = Math.ceil((new Date() - new Date(ts)) / 3600000);
+            let u = 0;
+            if (fark == 2) u = 150;
+            else if (fark == 3) u = 200;
+            else if (fark > 3) u = 200 + (fark - 3) * 100;
+            return { ucret: u, saat: fark };
+        }
+
+        function panelGoster(park) {
+            const p = document.getElementById("price-panel");
+            const res = ucretHesapla(park.giris_timestamp);
+            const durumText = (park.status || "DOLU").toUpperCase();
+            const baslik = park.bolge_adi || "A-12 BÖLGESİ";
+            const renk = durumText === "BOŞ" ? "#00ff44" : "#FF5A5F";
+
+            p.innerHTML = `
+                <div class="panel-content">
+                    <div class="panel-header">
+                        <div class="location-title" style="margin-right: 10px;">
+                            <div class="p-icon">P</div>
+                            ${baslik}
+                        </div>
+                        <span class="status-badge" style="color:${renk}; border:1px solid ${renk}">${durumText}</span>
+                    </div>
+                    ${park.plaka ? `<div class="plaka-box" style="color:${renk}">${park.plaka}</div>` : ''}
+                    <div class="info-grid">
+                        <div class="info-row"><span>Mesafe</span><span>23,0 km</span></div>
+                        <div class="info-row"><span>Süre</span><span>${res.saat} Saat (Canlı)</span></div>
+                        <div class="info-row"><span>Ücret</span><span style="color: #fbbf24">${res.ucret} TL</span></div>
+                        <div class="info-row"><span>Giriş Saati</span><span>${park.giris_saati || '--:--'}</span></div>
+                    </div>
+                    <button class="nav-btn" onclick="alert('Navigasyon başlatılıyor...')">NAVİGASYONU BAŞLAT &#10140;</button>
+                    <button class="close-btn" onclick="document.getElementById('price-panel').style.display='none'">KAPAT</button>
+                </div>
+            `;
+            p.style.display = "block";
+        }
+    </script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDCXI_xRr4jgzkwtDrH7w9Wk8DQuojMJn0&callback=initMap" async defer></script>
+</body>
+
+</html>

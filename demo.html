@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bursa Akıllı Otopark - Canlı Senkronizasyon</title>
+    <style>
+        html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; font-family: 'Segoe UI', Tahoma, sans-serif; }
+        #map { height: 100%; width: 100%; }
+        #price-panel {
+            position: absolute; top: 20px; right: 20px; width: 240px;
+            background: rgba(255, 255, 255, 0.95); padding: 15px; border-radius: 12px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.3); z-index: 2000; display: none;
+            border-top: 5px solid #e74c3c;
+        }
+    </style>
+</head>
+<body>
+    <div id="price-panel"></div>
+    <div id="map"></div>
+
+    <script>
+        const varsayilanMerkez = { lat: 40.226991369791286, lng: 28.84528824528653 }; 
+        let map, directionsService, directionsRenderer, sariRotaCizgisi;
+        let kullaniciKonumu = varsayilanMerkez;
+        let seciliHedef = null;
+        let targetMarker = null; 
+        let parkPolygons = []; // Haritadaki poligonları takip etmek için
+
+        function initMap() {
+            map = new google.maps.Map(document.getElementById("map"), {
+                center: varsayilanMerkez, zoom: 19, mapTypeId: 'satellite'
+            });
+
+            directionsService = new google.maps.DirectionsService();
+            directionsRenderer = new google.maps.DirectionsRenderer({
+                map: map, suppressMarkers: true, suppressPolylines: true 
+            });
+
+            sariRotaCizgisi = new google.maps.Polyline({
+                strokeColor: "#FFFF00", strokeWeight: 10, map: map, zIndex: 500
+            });
+
+            // CANLI VERİ ÇEKME FONKSİYONU
+            function verileriGuncelle() {
+                // 'otoparklar.json' dosyasını oku (Python'un güncellediği dosya)
+                fetch('otoparklar.json?' + new Date().getTime()) 
+                .then(r => r.json())
+                .then(data => {
+                    // Eski poligonları temizle
+                    parkPolygons.forEach(p => p.setMap(null));
+                    parkPolygons = [];
+
+                    data.forEach(park => {
+                        let poly = new google.maps.Polygon({
+                            paths: park.coords,
+                            strokeColor: "#0000FF",
+                            strokeWeight: 2,
+                            fillColor: park.fill, // İŞTE BURASI! Python ne derse o renk olur.
+                            fillOpacity: 0.6,
+                            map: map
+                        });
+
+                        parkPolygons.push(poly);
+
+                        google.maps.event.addListener(poly, 'mousedown', function() {
+                            seciliHedef = poligonMerkeziniBul(poly); 
+                            rotaGuncelle();
+                            if(park.status === "DOLU") panelGoster(park);
+                            else document.getElementById("price-panel").style.display = 'none';
+                        });
+                    });
+                });
+            }
+
+            // İlk açılışta veriyi çek
+            verileriGuncelle();
+            
+            // HER 2 SANİYEDE BİR KONTROL ET (Canlı Senkronizasyon)
+            setInterval(verileriGuncelle, 2000);
+        }
+
+        function poligonMerkeziniBul(polygon) {
+            let path = polygon.getPath();
+            let x = 0, y = 0, n = path.getLength();
+            for (let i = 0; i < n; i++) { x += path.getAt(i).lat(); y += path.getAt(i).lng(); }
+            return { lat: x / n, lng: y / n };
+        }
+
+        function rotaGuncelle() {
+            if (!seciliHedef) return;
+            directionsService.route({
+                origin: kullaniciKonumu,
+                destination: seciliHedef,
+                travelMode: google.maps.TravelMode.WALKING 
+            }, (result, status) => {
+                if (status == 'OK') {
+                    let path = result.routes[0].overview_path;
+                    let pts = [new google.maps.LatLng(kullaniciKonumu.lat, kullaniciKonumu.lng), ...path, new google.maps.LatLng(seciliHedef.lat, seciliHedef.lng)];
+                    sariRotaCizgisi.setPath(pts);
+                    if (targetMarker) targetMarker.setMap(null);
+                    targetMarker = new google.maps.Marker({ position: seciliHedef, map: map });
+                }
+            });
+        }
+    </script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDCXI_xRr4jgzkwtDrH7w9Wk8DQuojMJn0&callback=initMap" async defer></script>
+</body>
+</html>
