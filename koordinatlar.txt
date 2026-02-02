@@ -1,25 +1,2 @@
-on cephe
-
-Saniye 0.0 -> Nokta 1: X=292, Y=705   park başı çizgi
-Saniye 0.0 -> Nokta 2: X=556, Y=353  rögar
-Saniye 0.0 -> Nokta 3: X=661, Y=468   sol köşe
-Saniye 0.0 -> Nokta 4: X=1192, Y=497   sağ köşe
-
-arka cephe
-
-Saniye 30.0 -> Nokta 5: X=373, Y=499 park başı ağaç
-Saniye 30.0 -> Nokta 6: X=672, Y=246  park sonu ağaç
-Saniye 30.0 -> Nokta 7: X=869, Y=272   sağ yol sol köşe
-Saniye 30.0 -> Nokta 8: X=1044, Y=257  sağ kaldırım bitiş  beyaz
-
-google maps
-
-40.22676563103902, 28.84556233078694
-40.22688440632933, 28.845235771842656
-40.2268603441112, 28.84545906573873
-40.226980655116364, 28.845553613604636
-
-40.22667645223114, 28.84612617543383
-40.22643122123447, 28.846460781006865
-40.2264194460272, 28.84629850736532
-40.22628787076157, 28.84628375521398
+park_koordinatlari = [
+]
