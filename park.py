@@ -62,6 +62,8 @@ sistemi_otomatik_baslat()
 # --- AYARLAR ---
 KARAR_SURESI_SANIYE = 20  # Analiz süresi (Arka planda çalışır)
 MIN_MATCH_THRESH = 140    # Cephe tanıma hassasiyeti
+FRAME_SKIP = 4
+ONAY_SAYISI = 25
 
 # 1. HARİTA (KML) OKUYUCU
 def get_kml_coords(kml_file):
@@ -132,7 +134,9 @@ def get_active_homography(frame):
     if matches_arka > matches_on + 30: return H_ARKA, "ARKA_CEPHE"
     return None, "GECIS"
 
-# 4. ANA DÖNGÜ
+# =========================================================================
+# --- 4. ANA DÖNGÜ (YAYA FİLTRELİ VERSİYON) ---
+# =========================================================================
 video_source = "gorukle.mp4"
 cap = cv2.VideoCapture(video_source)
 fps = cap.get(cv2.CAP_PROP_FPS)
@@ -142,11 +146,15 @@ wait_time = int(1000 / fps)
 FRAME_LIMIT = int(fps * KARAR_SURESI_SANIYE)
 kml_parks = get_kml_coords('Birsav_akilli_park.kml') 
 
+# --- AYARLAR ---
+FRAME_SKIP = 5       # Analiz hızı
+ONAY_SAYISI = 15     # Yaya filtresi (Yaklaşık 3-4 saniye bekleme süresi)
+
 # --- SAYAÇLAR ---
 counter_on = 0
 counter_arka = 0
 
-# Veritabanı
+# Veritabanını Hazırla (Sayaçlı Versiyon)
 global_park_db = []
 for i, kml_poly in enumerate(kml_parks):
     global_park_db.append({
@@ -156,14 +164,15 @@ for i, kml_poly in enumerate(kml_parks):
         "fill_hex": "#27AE60",
         "kml_coords": kml_poly,
         "poly_video": None,    
-        "assigned_view": None 
+        "assigned_view": None,
+        "dolu_sayaci": 0  # <--- ÖNEMLİ: Her parkın kendi sayacı var
     })
 
 frame_sayac = 0
 analiz_sikligi = 3
 son_label = "BELIRSIZ"
 
-print(f"Sistem Başlatıldı. Sadece MOD bilgisi ekranda görünecek.")
+print(f"Sistem Baslatildi. Yaya filtresi aktif. Onay Limiti: {ONAY_SAYISI}")
 
 while True:
     success, img = cap.read()
@@ -171,120 +180,128 @@ while True:
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         continue
 
+    # --- HIZLANDIRMA (FRAME SKIP) ---
+    frame_sayac += 1
+    if frame_sayac % FRAME_SKIP != 0:
+        # Analiz yapma, sadece çizim yap
+        img_display = cv2.resize(img, (1280, 720))
+        for p in global_park_db:
+            if p["poly_video"] is not None:
+                cv2.polylines(img_display, [p["poly_video"]], True, p["color"], 2)
+        
+        # Bilgi Paneli
+        cv2.rectangle(img_display, (0,0), (350, 60), (0,0,0), -1)
+        text_color = (0, 255, 0) if "ON" in son_label else ((0, 255, 255) if "ARKA" in son_label else (0, 0, 255))
+        cv2.putText(img_display, f"MOD: {son_label}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, text_color, 2)
+        
+        cv2.imshow("Birsav AI - Master Otonom", img_display)
+        if cv2.waitKey(1) & 0xFF == ord('q'): break
+        continue
+
+    # --- ANALİZ KARESİ ---
     img = cv2.resize(img, (1280, 720))
     h, w = img.shape[:2]
     
-    if frame_sayac % analiz_sikligi == 0:
-        active_H, son_label = get_active_homography(img)
-        
-        # --- ZAMANLAYICI MANTIĞI (ARKA PLAN) ---
-        analiz_yapilsin_mi = False
-        
-        if son_label == "ON_CEPHE":
-            if counter_on < FRAME_LIMIT:
-                counter_on += analiz_sikligi
-                analiz_yapilsin_mi = True
-            else:
-                analiz_yapilsin_mi = False 
+    active_H, son_label = get_active_homography(img)
+    
+    # Zamanlayıcılar
+    analiz_yapilsin_mi = False
+    if son_label == "ON_CEPHE":
+        if counter_on < FRAME_LIMIT:
+            counter_on += FRAME_SKIP
+            analiz_yapilsin_mi = True
+        else: analiz_yapilsin_mi = False 
+    elif son_label == "ARKA_CEPHE":
+        if counter_arka < FRAME_LIMIT:
+            counter_arka += FRAME_SKIP
+            analiz_yapilsin_mi = True
+        else: analiz_yapilsin_mi = False
+    else: analiz_yapilsin_mi = False
 
-        elif son_label == "ARKA_CEPHE":
-            if counter_arka < FRAME_LIMIT:
-                counter_arka += analiz_sikligi
-                analiz_yapilsin_mi = True
-            else:
-                analiz_yapilsin_mi = False
+    if active_H is not None:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        thresh = cv2.adaptiveThreshold(cv2.GaussianBlur(gray, (5,5), 1), 255, 
+                                       cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 25, 16)
         
-        else:
-            analiz_yapilsin_mi = False
-
-        # --- PARK ALANLARINI HESAPLA ---
-        if active_H is not None:
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            thresh = cv2.adaptiveThreshold(cv2.GaussianBlur(gray, (5,5), 1), 255, 
-                                           cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 25, 16)
+        for i, park_data in enumerate(global_park_db):
             
-            for i, park_data in enumerate(global_park_db):
+            # Cephe Kontrolü
+            if park_data["assigned_view"] is not None and park_data["assigned_view"] != son_label:
+                park_data["poly_video"] = None; continue 
+
+            # Perspektif Dönüşüm
+            points = np.array([park_data["kml_coords"][:, [1,0]]], dtype='float32')
+            try:
+                video_poly = cv2.perspectiveTransform(points, active_H)[0].astype(int)
                 
-                # Başka cephenin malıysa çizme
-                if park_data["assigned_view"] is not None and park_data["assigned_view"] != son_label:
-                    park_data["poly_video"] = None 
-                    continue 
+                # Ekran Dışı Kontrolü
+                if not np.all((video_poly[:,0] > -200) & (video_poly[:,0] < 1500) & (video_poly[:,1] > -200) & (video_poly[:,1] < 1000)): 
+                    park_data["poly_video"] = None; continue
+                if not np.any((video_poly[:,0] > 0) & (video_poly[:,0] < w) & (video_poly[:,1] > 0) & (video_poly[:,1] < h)): 
+                    park_data["poly_video"] = None; continue
 
-                # Koordinat hesapla (Her zaman gerekli)
-                points = np.array([park_data["kml_coords"][:, [1,0]]], dtype='float32')
-                try:
-                    video_poly = cv2.perspectiveTransform(points, active_H)[0].astype(int)
+                if park_data["assigned_view"] is None: park_data["assigned_view"] = son_label
+                park_data["poly_video"] = video_poly
+
+                # --- KARAR MEKANİZMASI (BURASI KRİTİK) ---
+                if analiz_yapilsin_mi:
+                    mask = np.zeros(gray.shape, dtype=np.uint8)
+                    cv2.fillPoly(mask, [video_poly], 255)
+                    count = cv2.countNonZero(cv2.bitwise_and(thresh, thresh, mask=mask))
+                    rect_area = cv2.contourArea(video_poly)
                     
-                    # Basit geometri kontrolleri
-                    if not np.all((video_poly[:,0] > -200) & (video_poly[:,0] < 1500) & 
-                                  (video_poly[:,1] > -200) & (video_poly[:,1] < 1000)): 
-                        park_data["poly_video"] = None; continue
-                    
-                    if not np.any((video_poly[:,0] > 0) & (video_poly[:,0] < w) & 
-                                  (video_poly[:,1] > 0) & (video_poly[:,1] < h)): 
-                        park_data["poly_video"] = None; continue
+                    if rect_area > 0:
+                        doluluk_orani = count / rect_area
+                        anlik_tespit = doluluk_orani > 0.11
+                        
+                        # DEBUG: Terminale yazdır ki ne olduğunu görelim
+                        # print(f"Park {park_data['id']} Oran: {doluluk_orani:.2f} Sayac: {park_data['dolu_sayaci']}")
 
-                    # Zimmetleme
-                    if park_data["assigned_view"] is None:
-                        park_data["assigned_view"] = son_label
+                        # SAYAÇ MANTIĞI:
+                        if anlik_tespit:
+                            park_data["dolu_sayaci"] += 1
+                        else:
+                            park_data["dolu_sayaci"] = 0 # Boş görünce hemen sıfırla (veya yavaş yavaş düşür)
 
-                    # Koordinatı kaydet
-                    park_data["poly_video"] = video_poly
+                        # NİHAİ KARAR: Sadece sayaç limiti geçerse DOLU de!
+                        if park_data["dolu_sayaci"] >= ONAY_SAYISI:
+                            # Sayacı tavan yap ki taşmasın
+                            if park_data["dolu_sayaci"] > 100: park_data["dolu_sayaci"] = 100
+                            yeni_durum = "DOLU"
+                        else:
+                            # Sayaç 24 bile olsa, henüz 'BOS' demelisin
+                            yeni_durum = "BOS"
 
-                    # --- ANALİZ KISMI (SADECE SÜRE BİTMEDİYSE) ---
-                    if analiz_yapilsin_mi:
-                        mask = np.zeros(gray.shape, dtype=np.uint8)
-                        cv2.fillPoly(mask, [video_poly], 255)
-                        count = cv2.countNonZero(cv2.bitwise_and(thresh, thresh, mask=mask))
-                        rect_area = cv2.contourArea(video_poly)
-                        if rect_area > 0:
-                            doluluk_orani = count / rect_area
-                            yeni_durum = "DOLU" if doluluk_orani > 0.11 else "BOS"
-                            
-                            park_data["status"] = yeni_durum
-                            park_data["color"] = (0, 0, 255) if yeni_durum == "DOLU" else (0, 255, 0)
-                            park_data["fill_hex"] = "#E74C3C" if yeni_durum == "DOLU" else "#27AE60"
+                        park_data["status"] = yeni_durum
+                        park_data["color"] = (0, 0, 255) if yeni_durum == "DOLU" else (0, 255, 0)
+                        park_data["fill_hex"] = "#E74C3C" if yeni_durum == "DOLU" else "#27AE60"
 
-                except Exception:
-                    park_data["poly_video"] = None
-        
-        else:
-            # Geçiş anı: Gizle
-            for p in global_park_db:
-                p["poly_video"] = None
+            except Exception:
+                park_data["poly_video"] = None
+    else:
+        for p in global_park_db: p["poly_video"] = None
 
-        # --- JSON KAYIT ---
-        json_output = []
-        for p in global_park_db:
-            json_output.append({
-                "id": p["id"],
-                "status": p["status"],
-                "fill": p["fill_hex"],
-                "coords": [{"lat": pt[0], "lng": pt[1]} for pt in p["kml_coords"]]
-            })
-        with open('otoparklar.json', 'w') as f: json.dump(json_output, f)
+    # JSON KAYIT
+    json_output = []
+    for p in global_park_db:
+        json_output.append({
+            "id": p["id"], "status": p["status"], "fill": p["fill_hex"],
+            "coords": [{"lat": pt[0], "lng": pt[1]} for pt in p["kml_coords"]]
+        })
+    with open('otoparklar.json', 'w') as f: json.dump(json_output, f)
 
-    # --- GÖRSELLEŞTİRME ---
+    # Görselleştirme
     for p in global_park_db:
         if p["poly_video"] is not None:
             cv2.polylines(img, [p["poly_video"]], True, p["color"], 2)
 
-    # --- BİLGİ PANELİ (SADELEŞTİRİLMİŞ) ---
+    # Panel
     cv2.rectangle(img, (0,0), (350, 60), (0,0,0), -1)
-    
-    if "ON" in son_label:
-        text_color = (0, 255, 0) # Yeşil
-    elif "ARKA" in son_label:
-        text_color = (0, 255, 255) # Sarı/Cyan
-    else:
-        text_color = (0, 0, 255) # Kırmızı (Geçiş)
-    
+    text_color = (0, 255, 0) if "ON" in son_label else ((0, 255, 255) if "ARKA" in son_label else (0, 0, 255))
     cv2.putText(img, f"MOD: {son_label}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, text_color, 2)
 
     cv2.imshow("Birsav AI - Master Otonom", img)
-    if cv2.waitKey(wait_time) & 0xFF == ord('q'): break
-    
-    frame_sayac += 1
+    if cv2.waitKey(1) & 0xFF == ord('q'): break
 
 cap.release()
 cv2.destroyAllWindows()
