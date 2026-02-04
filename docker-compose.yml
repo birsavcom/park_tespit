@@ -6,7 +6,7 @@ services:
     volumes:
       - ./otoparklar.json:/app/otoparklar.json
     environment:
-      - DISPLAY=:0
+      - HEADLESS=1
     expose:
       - "3001:3001"
     networks:
