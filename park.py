@@ -26,7 +26,7 @@ def sistemi_otomatik_baslat():
 
     # 2. Yerel Sunucuyu (Localhost) Arka Planda Başlatma
     def sunucuyu_baslat():
-        port = 8000
+        port = 3001
         try:
             # Sunucu ayarları
             server_address = ('', port)
@@ -48,7 +48,7 @@ def sistemi_otomatik_baslat():
 
     # 3. Tarayıcıyı Otomatik Açma
     time.sleep(1.5) # Sunucunun tam oturması için kısa bir bekleme
-    url = "http://localhost:8000/otopark_demo.html"
+    url = "http://localhost:3001/otopark_demo.html"
     print(f">>> Tarayici Aciliyor: {url}\n")
     webbrowser.open(url)
 

@@ -1,0 +1,10 @@
+services:
+  park-tespit:
+    build: .
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./otoparklar.json:/app/otoparklar.json
+    environment:
+      - DISPLAY=:0
+    restart: unless-stopped
