@@ -1,10 +1,17 @@
 services:
-  park-tespit:
+  webapp:
     build: .
-    ports:
-      - "3001:3001"
+    container_name: park-tespit-webapp
+    restart: always
     volumes:
       - ./otoparklar.json:/app/otoparklar.json
     environment:
       - DISPLAY=:0
-    restart: unless-stopped
+    expose:
+      - "3001"
+    networks:
+      - biryerden-network
+
+networks:
+  biryerden-network:
+    external: true
