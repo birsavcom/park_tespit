@@ -1,0 +1,39 @@
+# Base image - Bu image'i bir kez build edip registry'ye push edin
+# Build: docker build -f Dockerfile.base -t park-tespit-base:latest .
+# Push:  docker tag park-tespit-base:latest YOUR_REGISTRY/park-tespit-base:latest
+#        docker push YOUR_REGISTRY/park-tespit-base:latest
+
+FROM python:3.11-slim
+
+# OpenCV sistem bagimliliklari
+RUN apt-get update && apt-get install -y \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Agir bagimliliklari onceden kur (PyTorch + OpenCV)
+# Bu adim ~15 dakika suruyor, ama sadece bir kez yapilacak
+RUN pip install --no-cache-dir \
+    torch==2.7.1 \
+    torchvision==0.22.1 \
+    torchaudio==2.7.1 \
+    opencv-python==4.13.0.90 \
+    numpy==2.3.5 \
+    pillow==12.0.0
+
+# Diger kucuk bagimliliklar
+RUN pip install --no-cache-dir \
+    filelock==3.20.0 \
+    fsspec==2025.12.0 \
+    Jinja2==3.1.6 \
+    MarkupSafe==2.1.5 \
+    mpmath==1.3.0 \
+    networkx==3.6.1 \
+    sympy==1.14.0 \
+    typing_extensions==4.15.0
+
+WORKDIR /app
