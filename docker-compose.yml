@@ -1,0 +1,17 @@
+services:
+  webapp:
+    build: .
+    container_name: park-tespit-webapp
+    restart: always
+    volumes:
+      - ./otoparklar.json:/app/otoparklar.json
+    environment:
+      - HEADLESS=1
+    expose:
+      - "3001:3001"
+    networks:
+      - biryerden-network
+
+networks:
+  biryerden-network:
+    external: true

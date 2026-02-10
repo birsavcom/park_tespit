@@ -9,6 +9,9 @@ import threading
 import webbrowser
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
+# HEADLESS MOD - Sunucuda ekran olmadan calismak icin
+HEADLESS = os.environ.get('HEADLESS', '0') == '1'
+
 # =========================================================================
 # --- 0. OTOMATİK BAŞLATMA MODÜLÜ (SİSTEMİ TEK TIKLA AÇAN KISIM) ---
 # =========================================================================
@@ -26,7 +29,7 @@ def sistemi_otomatik_baslat():
 
     # 2. Yerel Sunucuyu (Localhost) Arka Planda Başlatma
     def sunucuyu_baslat():
-        port = 8000
+        port = 3001
         try:
             # Sunucu ayarları
             server_address = ('', port)
@@ -46,11 +49,14 @@ def sistemi_otomatik_baslat():
     t.daemon = True # Ana program (pencere) kapanınca sunucu da kapansın
     t.start()
 
-    # 3. Tarayıcıyı Otomatik Açma
-    time.sleep(1.5) # Sunucunun tam oturması için kısa bir bekleme
-    url = "http://localhost:8000/otopark_demo.html"
-    print(f">>> Tarayici Aciliyor: {url}\n")
-    webbrowser.open(url)
+    # 3. Tarayıcıyı Otomatik Açma (sadece lokal modda)
+    if not HEADLESS:
+        time.sleep(1.5)
+        url = "http://localhost:3001/otopark_demo.html"
+        print(f">>> Tarayici Aciliyor: {url}\n")
+        webbrowser.open(url)
+    else:
+        print(">>> HEADLESS mod aktif - Tarayici acilmayacak")
 
 # --- SİSTEMİ BAŞLAT ---
 sistemi_otomatik_baslat()
@@ -194,8 +200,9 @@ while True:
         text_color = (0, 255, 0) if "ON" in son_label else ((0, 255, 255) if "ARKA" in son_label else (0, 0, 255))
         cv2.putText(img_display, f"MOD: {son_label}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, text_color, 2)
         
-        cv2.imshow("Birsav AI - Master Otonom", img_display)
-        if cv2.waitKey(1) & 0xFF == ord('q'): break
+        if not HEADLESS:
+            cv2.imshow("Birsav AI - Master Otonom", img_display)
+            if cv2.waitKey(1) & 0xFF == ord('q'): break
         continue
 
     # --- ANALİZ KARESİ ---
@@ -300,8 +307,10 @@ while True:
     text_color = (0, 255, 0) if "ON" in son_label else ((0, 255, 255) if "ARKA" in son_label else (0, 0, 255))
     cv2.putText(img, f"MOD: {son_label}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, text_color, 2)
 
-    cv2.imshow("Birsav AI - Master Otonom", img)
-    if cv2.waitKey(1) & 0xFF == ord('q'): break
+    if not HEADLESS:
+        cv2.imshow("Birsav AI - Master Otonom", img)
+        if cv2.waitKey(1) & 0xFF == ord('q'): break
 
 cap.release()
-cv2.destroyAllWindows()
+if not HEADLESS:
+    cv2.destroyAllWindows()

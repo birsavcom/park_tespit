@@ -1,0 +1,25 @@
+# Optimizasyon versiyonu - Base image ile hizli build
+# Kullanim: docker-compose -f docker-compose.optimized.yml up -d
+
+services:
+  webapp:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+      args:
+        BASE_IMAGE: park-tespit-base:latest  # veya registry adresiniz
+    container_name: park-tespit-webapp
+    restart: always
+    volumes:
+      - ./otoparklar.json:/app/otoparklar.json
+      - ./gorukle.mp4:/app/gorukle.mp4  # Video dosyasi
+    environment:
+      - DISPLAY=:0
+    ports:
+      - "3001:3001"
+    networks:
+      - biryerden-network
+
+networks:
+  biryerden-network:
+    external: true
