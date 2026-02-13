@@ -5,9 +5,10 @@ services:
     restart: always
     volumes:
       - ./otoparklar.json:/app/otoparklar.json
+      - ./system_state.json:/app/system_state.json
     environment:
       - HEADLESS=1
-    expose:
+    ports:
       - "3001:3001"
     networks:
       - biryerden-network

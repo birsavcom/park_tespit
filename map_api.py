@@ -82,7 +82,7 @@ def parking_json_file():
 
 @app.get("/system_state.json", include_in_schema=False)
 def system_state_json_file():
-    return _json_file_response(SYSTEM_STATE_JSON)
+    return {"running": True, "reason": "api_active", "updated_at": int(__import__("time").time() * 1000)}
 
 
 @app.get("/api/parking-status")

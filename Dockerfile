@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# OpenCV üçün sistem asılılıqları
+# OpenCV sistem bagimliliklari
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
@@ -12,15 +12,15 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Requirements kopyala və qur
+# Requirements kopyala ve kur
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Proyekt fayllarını kopyala
+# Proyekt fayllarini kopyala
 COPY . .
 
-# Port 3001 aç
+# Port 3001 ac
 EXPOSE 3001
 
-# Tətbiqi işlət
-CMD ["python", "park.py"]
+# Uvicorn ile FastAPI baslat
+CMD ["uvicorn", "map_api:app", "--host", "0.0.0.0", "--port", "3001"]
