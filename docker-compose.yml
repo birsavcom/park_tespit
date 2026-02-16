@@ -8,8 +8,8 @@ services:
       - ./system_state.json:/app/system_state.json
     environment:
       - HEADLESS=1
-    ports:
-      - "3001:3001"
+    expose:
+      - "3001"
     networks:
       - biryerden-network
 

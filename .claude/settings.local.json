@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Read(//Users/metinqardasov/Desktop/**)"
+      "Read(//Users/metinqardasov/Desktop/**)",
+      "Bash(ls:*)"
     ]
   }
 }
