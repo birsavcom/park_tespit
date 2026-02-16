@@ -600,6 +600,12 @@
             const durumText = (park.status || "DOLU").toUpperCase();
             const baslik = park.bolge_adi || "A-12 BÖLGESİ";
             const renk = durumText === "BOŞ" ? "#00ff44" : "#FF5A5F";
+            
+            // --- MESAFE HESAPLAMA (EKLENEN KISIM) ---
+            const parkMerkez = koordinatMerkeziBul(park.coords);
+            const mesafeM = mesafeHesapla(kullaniciKonumu, parkMerkez);
+            const mesafeStr = mesafeM >= 1000 ? (mesafeM / 1000).toFixed(1) + ' km' : Math.round(mesafeM) + ' m';
+            // ----------------------------------------
 
             p.innerHTML = `
                 <div class="panel-content">
@@ -612,7 +618,7 @@
                     </div>
                     ${park.plaka ? `<div class="plaka-box" style="color:${renk}">${park.plaka}</div>` : ''}
                     <div class="info-grid">
-                        <div class="info-row"><span>Mesafe</span><span>23,0 km</span></div>
+                        <div class="info-row"><span>Mesafe</span><span>${mesafeStr}</span></div>
                         <div class="info-row"><span>Süre</span><span>${res.saat} Saat (Canlı)</span></div>
                         <div class="info-row"><span>Ücret</span><span style="color: #fbbf24">${res.ucret} TL</span></div>
                         <div class="info-row"><span>Giriş Saati</span><span>${park.giris_saati || '--:--'}</span></div>
@@ -624,7 +630,7 @@
             p.style.display = "block";
         }
     </script>
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDCXI_xRr4jgzkwtDrH7w9Wk8DQuojMJn0&libraries=geometry&callback=initMap" async defer></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyD0fGnV43UcbklTRewrskSUy2ovUmE_taA&libraries=geometry&callback=initMap" async defer></script>
 </body>
 
 </html>
