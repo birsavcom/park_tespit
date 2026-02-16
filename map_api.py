@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from os import getenv
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 
 
+DEBUG = getenv("DEBUG", "false").lower() == "true"
+print(DEBUG)
 BASE_DIR = Path(__file__).resolve().parent
 MAP_HTML = BASE_DIR / "otopark_demo.html"
 PANEL_HTML = BASE_DIR / "panel.html"
@@ -82,7 +88,7 @@ def parking_json_file():
 
 @app.get("/system_state.json", include_in_schema=False)
 def system_state_json_file():
-    return _json_file_response(SYSTEM_STATE_JSON)
+    return {"running": True, "reason": "api_active", "updated_at": int(__import__("time").time() * 1000)}
 
 
 @app.get("/api/parking-status")

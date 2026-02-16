@@ -7,14 +7,15 @@ services:
       context: .
       dockerfile: Dockerfile.app
       args:
-        BASE_IMAGE: park-tespit-base:latest  # veya registry adresiniz
+        BASE_IMAGE: park-tespit-base:latest
     container_name: park-tespit-webapp
     restart: always
     volumes:
       - ./otoparklar.json:/app/otoparklar.json
-      - ./gorukle.mp4:/app/gorukle.mp4  # Video dosyasi
+      - ./system_state.json:/app/system_state.json
+      - ./gorukle.mp4:/app/gorukle.mp4
     environment:
-      - DISPLAY=:0
+      - HEADLESS=1
     ports:
       - "3001:3001"
     networks:
