@@ -598,7 +598,7 @@
             const p = document.getElementById("price-panel");
             const res = ucretHesapla(park.giris_timestamp);
             const durumText = (park.status || "DOLU").toUpperCase();
-            const baslik = park.bolge_adi || "A-12 BÖLGESİ";
+            const baslik = park.bolge_adi || "A-12 BÖLGESI";
             const renk = durumText === "BOŞ" ? "#00ff44" : "#FF5A5F";
             const parkMerkez = koordinatMerkeziBul(park.coords);
             const mesafeM = mesafeHesapla(kullaniciKonumu, parkMerkez);
