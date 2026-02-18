@@ -4,7 +4,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Bursa Akıllı Otopark - Neon Style</title>
+    <title>Bursa Akıllı Otopark - HERE Maps Neon</title>
+    
+    <link rel="stylesheet" type="text/css" href="https://js.api.here.com/v3/3.1/mapsjs-ui.css" />
+
     <style>
         html,
         body {
@@ -21,50 +24,87 @@
             height: 100%;
             width: 100%;
             transition: filter 0.3s ease;
+            background: #000;
+        }
+        .H_map, .H_map canvas {
+            background: #000 !important;
         }
 
         /* UYDU Modu: Karartılmış */
         .uydu-modu {
-            filter: brightness(0.4) contrast(1.2) saturate(1.1);
+            filter: brightness(0.6) contrast(1.2) saturate(1.1);
         }
 
         /* HARİTA Modu: Net Siyah */
         .harita-modu {
-            filter: none;
+            filter: brightness(0.82) contrast(1.22) saturate(0.65);
         }
 
         /* --- SOL ÜST MİNİ NAVİGASYON PENCERESİ --- */
         #nav-minipanel {
             position: absolute;
-            top: 60px; /* Harita butonlarının altı */
-            left: 10px;
-            width: 200px;
-            height: 200px;
-            background: #fff; /* Klasik Beyaz */
-            border: 4px solid #fff;
+            top: 20px;
+            left: 20px;
+            width: 260px;
+            height: 240px;
+            background: #000;
+            border: 2px solid #202020;
             border-radius: 12px;
             z-index: 1000;
-            display: none; /* Rota oluşunca açılacak */
+            display: none;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
             overflow: hidden;
+            resize: both;
+            min-width: 180px;
+            min-height: 170px;
+            max-width: 70vw;
+            max-height: 70vh;
         }
 
-        /* Mini harita ortasındaki araç imleci (Navigasyon Başlayınca Görünür) */
+        #nav-drag-handle {
+            height: 28px;
+            background: #0b0b0b;
+            color: #cfcfcf;
+            border-bottom: 1px solid #202020;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            padding: 0 10px;
+            display: flex;
+            align-items: center;
+            cursor: move;
+            user-select: none;
+        }
+
+        #mini-map-wrap {
+            position: relative;
+            width: 100%;
+            height: calc(100% - 28px);
+            background: #000;
+        }
+
+        #mini-map {
+            width: 100%;
+            height: 100%;
+            filter: none;
+        }
+
+        /* Mini harita ortasındaki araç imleci */
         #nav-arrow {
             position: absolute;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            width: 0; 
-            height: 0; 
-            border-left: 10px solid transparent;
-            border-right: 10px solid transparent;
-            border-bottom: 20px solid #4285F4; /* Google Mavisi */
+            width: 14px;
+            height: 14px;
+            background: #2f87ff;
+            border: 2px solid #fff;
+            border-radius: 50%;
+            box-shadow: 0 0 12px rgba(47, 135, 255, 0.9);
             z-index: 1002;
             pointer-events: none;
-            display: none; /* Başlangıçta gizli */
+            display: none;
         }
-        /* ------------------------------------------------ */
 
         #price-panel {
             position: absolute;
@@ -86,14 +126,8 @@
         }
 
         @keyframes slideUp {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         .panel-header {
@@ -128,18 +162,6 @@
             font-weight: 800;
             padding: 4px 12px;
             border-radius: 20px;
-        }
-
-        .status-dolu {
-            color: #FF5A5F;
-            background: rgba(255, 90, 95, 0.15);
-            border: 1px solid rgba(255, 90, 95, 0.5);
-        }
-
-        .status-bos {
-            color: #00ff44;
-            background: rgba(0, 255, 68, 0.15);
-            border: 1px solid rgba(0, 255, 68, 0.4);
         }
 
         .info-grid {
@@ -196,14 +218,27 @@
             font-size: 18px;
             letter-spacing: 2px;
         }
+        
+        /* HERE Maps Telif Hakkı Yazısını Küçültme (Opsiyonel) */
+        .H_copyright, .H_logo { display: none !important; }
 
     </style>
+    
+    <script src="https://js.api.here.com/v3/3.1/mapsjs-core.js" type="text/javascript" charset="utf-8"></script>
+    <script src="https://js.api.here.com/v3/3.1/mapsjs-service.js" type="text/javascript" charset="utf-8"></script>
+    <script src="https://js.api.here.com/v3/3.1/mapsjs-ui.js" type="text/javascript" charset="utf-8"></script>
+    <script src="https://js.api.here.com/v3/3.1/mapsjs-mapevents.js" type="text/javascript" charset="utf-8"></script>
+    <script src="https://js.api.here.com/v3/3.1/mapsjs-harp.js" type="text/javascript" charset="utf-8"></script>
 </head>
 
 <body>
 
     <div id="nav-minipanel">
-        <div id="nav-arrow"></div> <div id="mini-map" style="width:100%; height:100%;"></div>
+        <div id="nav-drag-handle">Canli Navigasyon</div>
+        <div id="mini-map-wrap">
+            <div id="mini-map"></div>
+            <div id="nav-arrow"></div>
+        </div>
     </div>
 
     <div id="price-panel"></div>
@@ -213,30 +248,199 @@
     <script>
         // GLOBAL DEĞİŞKENLER
         const varsayilanMerkez = { lat: 40.226991369791286, lng: 28.84528824528653 };
+        const HERE_API_KEY = 'UO-tiV8ME4AYsgMrTay0yZ7Jmy6ahf_nhURpS-h03Kw'; // Senin Keyin
+
+        let platform, map, miniMap;
+        let ui, miniUi;
+        let behavior, miniBehavior;
+        let router;
         
-        let map, miniMap; 
-        let directionsService, directionsRenderer, miniDirectionsRenderer;
-        let sariRotaCizgisi, trafficLayer;
+        let sariRotaCizgisi = null; // Polyline
+        let miniRotaCizgisi = null; // Polyline
+
         let kullaniciKonumu = varsayilanMerkez;
         let sonKonum = null;
         let seciliHedef = null;
-        let targetMarker = null; // Ana harita hedef markeri
-        let miniTargetMarker = null; // YENİ: Mini harita hedef markeri
-        let kullaniciMarker = null;
+
+        let targetMarker = null; 
+        let miniTargetMarker = null; 
+        let targetDot = null;
+        let miniTargetDot = null;
+        let kullaniciMarker = null; // DomMarker (CSS Circle)
         let miniUserMarker = null; 
-        let parkMarkers = {};
+        
+        let parkMarkers = {}; // Araba markerları
+        let parkDataById = {};
         let sistemAktif = true;
         let veriGuncellemeDevam = false;
-        
-        let navigasyonAktif = false; 
+        let veriGuncellemeBaslangic = 0;
+        let navigasyonAktif = false;
+        let navHeadingDeg = 0;
+        let ilkHaritaOdaklandi = false;
+        const FETCH_TIMEOUT_MS = 700;
+        const GEOLOC_START_TIMEOUT_MS = 8000;
 
-        // 1. İKON ÜRETİCİ
-        function getCarIconSVG(text, color, zoom) {
-            const scale = getScaleByZoom(zoom);
-            const fontSize = zoom >= 21 ? 14 : (zoom >= 20 ? 12 : (zoom >= 19 ? 10 : 8));
-            
+        function setupMiniPanelInteractions() {
+            const panel = document.getElementById("nav-minipanel");
+            const handle = document.getElementById("nav-drag-handle");
+            if (!panel || !handle || panel.dataset.dragReady === "1") return;
+            panel.dataset.dragReady = "1";
+
+            let dragging = false;
+            let startX = 0, startY = 0;
+            let startLeft = 0, startTop = 0;
+
+            handle.addEventListener("mousedown", (e) => {
+                if (e.button !== 0) return;
+                dragging = true;
+                const rect = panel.getBoundingClientRect();
+                startX = e.clientX;
+                startY = e.clientY;
+                startLeft = rect.left;
+                startTop = rect.top;
+                panel.style.right = "auto";
+                panel.style.bottom = "auto";
+                e.preventDefault();
+            });
+
+            window.addEventListener("mousemove", (e) => {
+                if (!dragging) return;
+                const maxLeft = Math.max(0, window.innerWidth - panel.offsetWidth);
+                const maxTop = Math.max(0, window.innerHeight - panel.offsetHeight);
+                const left = Math.min(maxLeft, Math.max(0, startLeft + (e.clientX - startX)));
+                const top = Math.min(maxTop, Math.max(0, startTop + (e.clientY - startY)));
+                panel.style.left = left + "px";
+                panel.style.top = top + "px";
+            });
+
+            window.addEventListener("mouseup", () => {
+                if (!dragging) return;
+                dragging = false;
+                if (miniMap) miniMap.getViewPort().resize();
+            });
+
+            if (window.ResizeObserver) {
+                const ro = new ResizeObserver(() => {
+                    if (miniMap) miniMap.getViewPort().resize();
+                });
+                ro.observe(panel);
+            }
+        }
+
+        function hesaplaHeading(k1, k2) {
+            if (!k1 || !k2) return navHeadingDeg;
+            const dLng = (k2.lng - k1.lng) * Math.PI / 180;
+            const lat1 = k1.lat * Math.PI / 180;
+            const lat2 = k2.lat * Math.PI / 180;
+            const y = Math.sin(dLng) * Math.cos(lat2);
+            const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+            let brng = Math.atan2(y, x) * (180 / Math.PI);
+            brng = (brng + 360) % 360;
+            return brng;
+        }
+
+        function updateNavArrow(headingDeg) {
+            const arrow = document.getElementById("nav-arrow");
+            if (!arrow) return;
+            arrow.style.transform = `translate(-50%, -50%) rotate(${headingDeg}deg)`;
+        }
+
+        function createUserPinIcon(size = "main") {
+            const isMain = size === "main";
+            const w = isMain ? 28 : 22;
+            const h = isMain ? 38 : 30;
+            const ax = Math.round(w / 2);
+            const ay = h;
             const svg = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 30 40">
+                    <path d="M15 0C7.8 0 2 5.8 2 13c0 8.8 10.5 21.8 12.2 23.9.4.5 1.2.5 1.6 0C17.5 34.8 28 21.8 28 13 28 5.8 22.2 0 15 0z" fill="#d32f2f" stroke="#7f0000" stroke-width="1.2"/>
+                    <circle cx="15" cy="13" r="5.5" fill="#ffffff"/>
+                    <circle cx="15" cy="13" r="2.2" fill="#d32f2f"/>
+                </svg>
+            `;
+            return new H.map.Icon(svg, { size: { w, h }, anchor: { x: ax, y: ay } });
+        }
+
+        function createTargetPinIcon(size = "main") {
+            const isMain = size === "main";
+            const w = isMain ? 38 : 30;
+            const h = isMain ? 54 : 42;
+            const ax = Math.round(w / 2);
+            const ay = h;
+            const svg = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 30 42">
+                    <path d="M15 1C7.8 1 2 6.8 2 14c0 9 10.6 22.5 12.3 24.8.4.5 1.1.5 1.5 0C17.4 36.5 28 23 28 14 28 6.8 22.2 1 15 1z" fill="#ff1744" stroke="#7a0016" stroke-width="1.6"/>
+                    <circle cx="15" cy="14" r="6.2" fill="#ffffff"/>
+                    <circle cx="15" cy="14" r="2.7" fill="#ff1744"/>
+                </svg>
+            `;
+            return new H.map.Icon(svg, { size: { w, h }, anchor: { x: ax, y: ay } });
+        }
+
+        function temizleAdresNumarasiEtiketleri(targetMap) {
+            if (!targetMap) return false;
+            try {
+                const baseLayer = targetMap.getBaseLayer && targetMap.getBaseLayer();
+                const provider = baseLayer && baseLayer.getProvider && baseLayer.getProvider();
+                if (!provider || typeof provider.getStyle !== "function" || typeof provider.setStyle !== "function") {
+                    return false;
+                }
+
+                const style = provider.getStyle();
+                if (!style || typeof style !== "object" || !style.layers) return false;
+
+                const patched = JSON.parse(JSON.stringify(style));
+                let changed = false;
+                const hideNeedles = [
+                    "house-number", "house_number", "housenumber", "address", "addr",
+                    "poi", "pois", "place", "landmark", "amenity", "shop", "hotel",
+                    "restaurant", "cafe", "bar", "market", "pharmacy", "supermarket"
+                ];
+
+                for (const [key, layer] of Object.entries(patched.layers)) {
+                    if (!layer || typeof layer !== "object") continue;
+                    const src = (layer["source-layer"] || layer.sourceLayer || layer.source || "").toString();
+                    const text = `${key} ${layer.id || ""} ${src}`.toLowerCase();
+                    const shouldHide = hideNeedles.some(n => text.includes(n));
+                    if (!shouldHide) continue;
+
+                    if (layer.visible !== false) {
+                        layer.visible = false;
+                        changed = true;
+                    }
+                    if (layer.draw && layer.draw.text && layer.draw.text.visible !== false) {
+                        layer.draw.text.visible = false;
+                        changed = true;
+                    }
+                }
+
+                if (patched.scene && patched.scene.background && patched.scene.background.color !== "#000000") {
+                    patched.scene.background.color = "#000000";
+                    changed = true;
+                }
+
+                if (changed) provider.setStyle(patched);
+                return true;
+            } catch (e) {
+                console.debug("Etiket temizleme atlandi:", e);
+                return false;
+            }
+        }
+
+        function uygulaEtiketTemizligiGecikmeli(targetMap) {
+            let tries = 0;
+            const t = setInterval(() => {
+                tries += 1;
+                const done = temizleAdresNumarasiEtiketleri(targetMap);
+                if (done || tries >= 60) clearInterval(t);
+            }, 400);
+        }
+
+        // 1. İKON ÜRETİCİ (SVG String Döndürür)
+        function getCarSVGString(text, color, rotationDeg = 0) {
+            return `
             <svg xmlns="http://www.w3.org/2000/svg" width="100" height="50" viewBox="0 0 100 50">
+                <g transform="rotate(${rotationDeg} 50 25)">
                 <path d="M 32,5 L 28,2 Q 26,2 26,5 Z" fill="black" stroke="${color}" stroke-width="1.2" /> 
                 <path d="M 32,45 L 28,48 Q 26,48 26,45 Z" fill="black" stroke="${color}" stroke-width="1.2" /> 
                 <path d="M 20,5 L 80,5 Q 95,5 95,15 L 95,35 Q 95,45 80,45 L 20,45 Q 5,45 5,35 L 5,15 Q 5,5 20,5 M 25,10 L 25,40 M 70,10 L 70,40 M 30,8 L 65,8 Q 75,8 75,15 L 75,35 Q 75,42 65,42 L 30,42 Q 20,42 20,35 L 20,15 Q 20,8 30,8" fill="black" stroke="${color}" stroke-width="2.5" />
@@ -244,263 +448,390 @@
                 <line x1="93" y1="32" x2="93" y2="40" stroke="${color}" stroke-width="3" stroke-linecap="round" />
                 <line x1="7" y1="10" x2="7" y2="18" stroke="${color}" stroke-width="3" stroke-linecap="round" />
                 <line x1="7" y1="32" x2="7" y2="40" stroke="${color}" stroke-width="3" stroke-linecap="round" />
-                <text x="50" y="28" fill="${color}" font-family="monospace" font-weight="900" font-size="${fontSize}" 
+                <text x="50" y="28" fill="${color}" font-family="monospace" font-weight="900" font-size="14" 
                       text-anchor="middle" dominant-baseline="middle">${text}</text>
+                </g>
             </svg>`;
-
-            const sizeMultiplier = 0.5;
-
-            return {
-                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
-                scaledSize: new google.maps.Size(100 * scale * sizeMultiplier, 50 * scale * sizeMultiplier),
-                anchor: new google.maps.Point(50 * scale * sizeMultiplier, 25 * scale * sizeMultiplier)
-            };
         }
 
-        // SİYAH TEMA AYARLARI
-        const pitchBlackStyle = [
-            { elementType: "geometry", stylers: [{ color: "#101010" }] },
-            { elementType: "labels.text.stroke", stylers: [{ color: "#101010" }] },
-            { elementType: "labels.text.fill", stylers: [{ color: "#808080" }] },
-            { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#bfbfbf" }] },
-            { featureType: "poi", stylers: [{ visibility: "off" }] },
-            { featureType: "road", elementType: "geometry", stylers: [{ color: "#252525" }] },
-            { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#151515" }] },
-            { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#666666" }] },
-            { featureType: "water", elementType: "geometry", stylers: [{ color: "#000000" }] },
-            { featureType: "transit", stylers: [{ visibility: "off" }] }
-        ];
-
         function initMap() {
+            // HERE Platform Başlat
+            platform = new H.service.Platform({
+                'apikey': HERE_API_KEY
+            });
+            const preferredEngine =
+                (H.Map && H.Map.EngineType && H.Map.EngineType.HARP) ? H.Map.EngineType.HARP : null;
+            const layerOpts = { lg: 'tr', pois: false };
+            if (preferredEngine) layerOpts.engineType = preferredEngine;
+            let defaultLayers = platform.createDefaultLayers(layerOpts);
+
+            const pickMainLayer = (layers) => {
+                const v = layers && layers.vector && layers.vector.normal;
+                return (v && (v.mapnight || v.map)) || null;
+            };
+            const pickMiniLayer = (layers, fallbackLayer) => {
+                const v = layers && layers.vector && layers.vector.normal;
+                return (v && (v.mapnight || v.map)) || fallbackLayer;
+            };
+
             const mapElement = document.getElementById("map");
+            let mainBaseLayer = pickMainLayer(defaultLayers);
+            if (!mainBaseLayer) {
+                console.error("HERE base layer bulunamadi. API key/katman yetkisini kontrol et.");
+                return;
+            }
 
-            // --- ANA HARİTA (SİYAH TEMA) ---
-            map = new google.maps.Map(mapElement, {
+            const mainMapOptions = {
+                zoom: 18.5,
                 center: varsayilanMerkez,
-                zoom: 19,
-                mapTypeId: 'roadmap', 
-                disableDefaultUI: true,
-                mapTypeControl: true,
-                mapTypeControlOptions: {
-                    style: google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
-                    position: google.maps.ControlPosition.LEFT_TOP
-                },
-                gestureHandling: 'greedy',
-                styles: pitchBlackStyle
-            });
+                pixelRatio: window.devicePixelRatio || 1,
+                maxZoom: 21
+            };
+            if (preferredEngine) mainMapOptions.engineType = preferredEngine;
 
-            // --- MİNİ NAVİGASYON HARİTASI (BEYAZ TEMA) ---
-            miniMap = new google.maps.Map(document.getElementById("mini-map"), {
-                center: varsayilanMerkez,
-                zoom: 16,
-                mapTypeId: 'roadmap',
-                disableDefaultUI: true,
-                styles: [], // Varsayılan Google renkleri (Beyaz tema)
-                heading: 0,
-                tilt: 0
-            });
-
-            map.addListener('maptypeid_changed', () => {
-                const currentType = map.getMapTypeId();
-                const mapEl = document.getElementById("map");
-                if (currentType === 'satellite' || currentType === 'hybrid') {
-                    mapEl.classList.add('uydu-modu');
-                    mapEl.classList.remove('harita-modu');
-                } else {
-                    mapEl.classList.remove('uydu-modu');
-                    mapEl.classList.add('harita-modu');
+            try {
+                map = new H.Map(mapElement, mainBaseLayer, mainMapOptions);
+            } catch (e) {
+                console.warn("HARP motoru acilamadi, varsayilan motora geri donuluyor:", e);
+                defaultLayers = platform.createDefaultLayers({ lg: 'tr', pois: false });
+                mainBaseLayer = pickMainLayer(defaultLayers);
+                if (!mainBaseLayer) {
+                    console.error("Fallback base layer da bulunamadi.");
+                    return;
                 }
-            });
+                map = new H.Map(mapElement, mainBaseLayer, {
+                    zoom: 18.5,
+                    center: varsayilanMerkez,
+                    pixelRatio: window.devicePixelRatio || 1
+                });
+            }
+            mapElement.classList.remove("uydu-modu");
+            mapElement.classList.add("harita-modu");
+            // Harita stabilitesi icin katman stili runtime degistirilmiyor.
 
-            trafficLayer = new google.maps.TrafficLayer();
-            trafficLayer.setMap(map);
+            // Pencere boyutu değişince haritayı güncelle
+            window.addEventListener('resize', () => map.getViewPort().resize());
 
-            directionsService = new google.maps.DirectionsService();
-            
-            // Ana Harita Rotası
-            directionsRenderer = new google.maps.DirectionsRenderer({
-                map: map, suppressMarkers: true, suppressPolylines: true
-            });
+            // Etkileşimleri aç (Zoom, Pan)
+            behavior = new H.mapevents.Behavior(new H.mapevents.MapEvents(map));
+            // UI Bileşenleri (Zoom butonları vb. - İstersen kaldırabilirsin)
+            ui = H.ui.UI.createDefault(map, defaultLayers);
+            // Varsayılan UI'yi biraz sadeleştirelim
+            ui.removeControl("mapsettings"); 
 
-            // Mini Harita Rotası
-            miniDirectionsRenderer = new google.maps.DirectionsRenderer({
-                map: miniMap,
-                suppressMarkers: true,
-                preserveViewport: true, 
-                polylineOptions: { strokeColor: "#4285F4", strokeWeight: 6 }
-            });
 
-            sariRotaCizgisi = new google.maps.Polyline({
-                strokeColor: "#ffea00", strokeOpacity: 1.0, strokeWeight: 6, map: map, zIndex: 500
-            });
+            // --- MİNİ HARİTA (Gündüz Modu) ---
+            const miniElement = document.getElementById("mini-map");
+            const miniBaseLayer = pickMiniLayer(defaultLayers, mainBaseLayer);
+
+            const miniMapOptions = {
+                zoom: 18,
+                center: varsayilanMerkez,
+                pixelRatio: window.devicePixelRatio || 1,
+                maxZoom: 21
+            };
+            if (preferredEngine) miniMapOptions.engineType = preferredEngine;
+            miniMap = new H.Map(
+                miniElement,
+                miniBaseLayer,
+                miniMapOptions
+            );
+            miniElement.classList.add("harita-modu");
+            // Harita stabilitesi icin katman stili runtime degistirilmiyor.
+            setupMiniPanelInteractions();
+            miniBehavior = new H.mapevents.Behavior(new H.mapevents.MapEvents(miniMap));
+            // Mini haritada wheel zoom acik tutuluyor
+            // Mini haritada UI yok
+            // miniUi = H.ui.UI.createDefault(miniMap, defaultLayers); 
+
+            // Router Servisini Başlat
+            router = platform.getRoutingService(null, 8);
+            uygulaEtiketTemizligiGecikmeli(map);
+            uygulaEtiketTemizligiGecikmeli(miniMap);
+
+            // Uydu/Harita Geçiş Mantığı (HTML class'larına göre)
+            // HERE Maps'te base layer değişimi:
+            // document.getElement... classList olayını dinleyebiliriz ama
+            // basitlik adına şimdilik CSS filtresi ile idare edeceğiz.
+            // Eğer "Satellite" butonuna basılırsa setBaseLayer yapmalısın.
+            // Şimdilik sadece CSS filtresi üzerinden gidiyoruz.
 
             // Kullanıcı Konum Takibi
             if (navigator.geolocation) {
                 navigator.geolocation.watchPosition(
                     (p) => {
                         const yeniKonum = { lat: p.coords.latitude, lng: p.coords.longitude };
-                        if (sonKonum && mesafeHesapla(sonKonum, yeniKonum) < 2) return;
+                        const oncekiKonum = sonKonum;
+                        if (oncekiKonum && mesafeHesapla(oncekiKonum, yeniKonum) < 2) return;
                         kullaniciKonumu = yeniKonum;
                         sonKonum = yeniKonum;
-
-                        // Ana Harita Markeri
-                        if (!kullaniciMarker) {
-                            kullaniciMarker = new google.maps.Marker({
-                                position: yeniKonum, map: map,
-                                icon: {
-                                    path: google.maps.SymbolPath.CIRCLE, scale: 10, fillColor: "#00aaff", fillOpacity: 1, strokeColor: "white", strokeWeight: 3
-                                }
-                            });
-                        } else {
-                            kullaniciMarker.setPosition(yeniKonum);
+                        if (oncekiKonum) {
+                            navHeadingDeg = hesaplaHeading(oncekiKonum, yeniKonum);
+                            if (navigasyonAktif) updateNavArrow(navHeadingDeg);
                         }
 
-                        // Mini Harita Markeri (Mavi Nokta)
-                        if (!miniUserMarker) {
-                            miniUserMarker = new google.maps.Marker({
-                                position: yeniKonum, map: miniMap,
-                                icon: {
-                                    path: google.maps.SymbolPath.CIRCLE,
-                                    scale: 7,
-                                    fillColor: "#4285F4",
-                                    fillOpacity: 1,
-                                    strokeColor: "white",
-                                    strokeWeight: 2
-                                },
-                                zIndex: 1002
-                            });
-                        } else {
-                            miniUserMarker.setPosition(yeniKonum);
-                        }
+                        // Ana Harita Kullanıcı Markeri (Mavi Daire)
+                        updateUserMarker(map, 'main', yeniKonum);
+                        // Mini Harita Kullanıcı Markeri
+                        updateUserMarker(miniMap, 'mini', yeniKonum);
 
                         // Navigasyon Aktifse Mini Haritayı Odakla
                         if (navigasyonAktif) {
                             miniMap.setCenter(yeniKonum);
+                            if (miniMap.getZoom() < 19) miniMap.setZoom(19);
                         }
 
                         if (seciliHedef) rotaGuncelle();
                     }, null, { enableHighAccuracy: true, maximumAge: 3000 }
                 );
-            }
-
-            // --- GÜNCELLEME VE MARKER YÖNETİMİ ---
-            async function sistemDurumunuKontrolEt() {
-                try {
-                    const r = await fetch('system_state.json?t=' + new Date().getTime(), { cache: 'no-store' });
-                    if (!r.ok) throw new Error("state http");
-                    const state = await r.json();
-                    sistemAktif = !!state.running;
-                } catch (e) {
-                    sistemAktif = false;
-                }
-            }
-
-            function verileriGuncelle() {
-                if (!sistemAktif || veriGuncellemeDevam) return;
-                veriGuncellemeDevam = true;
-                fetch('otoparklar.json?t=' + new Date().getTime(), { cache: 'no-store' })
-                    .then(r => r.json())
-                    .then(data => {
-                        data.forEach(park => {
-                            let parkID = park.id; // ID ile takip
-                            let parkIsmi = (park.status || "BOS").toUpperCase();
-                            let isBos = parkIsmi.includes("BOS") || parkIsmi.includes("BOŞ");
-                            let renk = isBos ? "#00ff44" : "#FF5A5F";
-                            let yazi = isBos ? "BOŞ" : "DOLU";
-                            
-                            let merkez = koordinatMerkeziBul(park.coords);
-                            let rotasyon = parkYonuHesapla(park.coords);
-                            let currentZoom = map.getZoom();
-
-                            if (parkMarkers[parkID]) {
-                                let marker = parkMarkers[parkID];
-                                if (marker.statusText !== yazi) {
-                                    marker.statusText = yazi;
-                                    marker.statusColor = renk;
-                                    marker.setIcon(getCarIconSVG(
-                                        currentZoom < 18 ? "" : yazi, 
-                                        renk, 
-                                        currentZoom
-                                    ));
-                                }
-                            } else {
-                                let arabaMarker = new google.maps.Marker({
-                                    position: merkez,
-                                    map: map,
-                                    icon: getCarIconSVG(currentZoom < 18 ? "" : yazi, renk, currentZoom),
-                                    rotation: rotasyon + 90,
-                                    zIndex: 1000,
-                                    statusText: yazi,
-                                    statusColor: renk
-                                });
-
-                                arabaMarker.addListener('click', function () {
-                                    seciliHedef = merkez;
-                                    rotaGuncelle();
-                                    panelGoster(park);
-                                    
-                                    // Sol Üst Mini Pencereyi Aç
-                                    document.getElementById("nav-minipanel").style.display = "block";
-                                    navigasyonAktif = false;
-                                    document.getElementById("nav-arrow").style.display = "none";
-                                    if(miniUserMarker) miniUserMarker.setVisible(true); // Mavi noktayı geri getir
-                                });
-
-                                parkMarkers[parkID] = arabaMarker;
-                            }
-                        });
-                    })
-                    .catch(err => console.log("Veri okuma hatası:", err))
-                    .finally(() => {
-                        veriGuncellemeDevam = false;
-                    });
+            } else {
+                // Konum yoksa varsayılan marker koy
+                updateUserMarker(map, 'main', varsayilanMerkez);
+                updateUserMarker(miniMap, 'mini', varsayilanMerkez);
             }
 
             // Döngüyü Başlat
+            // Harita acilir acilmaz park alanlarini cek
+            verileriGuncelle();
+            setTimeout(verileriGuncelle, 150);
+
             sistemDurumunuKontrolEt().then(() => {
-                if (sistemAktif) verileriGuncelle();
+                verileriGuncelle();
             });
             setInterval(async () => {
                 await sistemDurumunuKontrolEt();
-                if (sistemAktif) verileriGuncelle();
-            }, 1000);
+                verileriGuncelle();
+            }, 300);
+        }
 
-            map.addListener('zoom_changed', function () {
-                const currentZoom = map.getZoom();
-                Object.values(parkMarkers).forEach(marker => { 
-                    marker.setIcon(getCarIconSVG(
-                        currentZoom < 18 ? "" : marker.statusText, 
-                        marker.statusColor, 
-                        currentZoom
-                    ));
+        // --- HERE Maps İçin Özel Marker Oluşturma Fonksiyonları ---
+        
+        function updateUserMarker(targetMap, type, coord) {
+            const icon = createUserPinIcon(type === 'main' ? 'main' : 'mini');
+
+            if (type === 'main') {
+                if (kullaniciMarker) {
+                    kullaniciMarker.setGeometry(coord);
+                } else {
+                    kullaniciMarker = new H.map.Marker(coord, { icon: icon });
+                    targetMap.addObject(kullaniciMarker);
+                }
+            } else {
+                if (miniUserMarker) {
+                    miniUserMarker.setGeometry(coord);
+                } else {
+                    miniUserMarker = new H.map.Marker(coord, { icon: icon });
+                    targetMap.addObject(miniUserMarker);
+                }
+            }
+        }
+
+        // --- GÜNCELLEME VE MARKER YÖNETİMİ ---
+        async function fetchJsonWithFallback(urls) {
+            let lastError = null;
+            for (const url of urls) {
+                let timer = null;
+                try {
+                    const sep = url.includes('?') ? '&' : '?';
+                    const controller = new AbortController();
+                    timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+                    const r = await fetch(`${url}${sep}t=${Date.now()}`, {
+                        cache: 'no-store',
+                        signal: controller.signal
+                    });
+                    clearTimeout(timer);
+                    if (!r.ok) throw new Error(`${url} HTTP ${r.status}`);
+                    return await r.json();
+                } catch (e) {
+                    lastError = e;
+                } finally {
+                    if (timer) clearTimeout(timer);
+                }
+            }
+            throw lastError || new Error("json fetch failed");
+        }
+
+        async function sistemDurumunuKontrolEt() {
+            try {
+                const state = await fetchJsonWithFallback([
+                    '/system_state.json',
+                    'system_state.json'
+                ]);
+                sistemAktif = !!state.running;
+            } catch (e) {
+                // system_state yoksa veri akisina devam et
+                sistemAktif = true;
+            }
+        }
+
+        function verileriGuncelle() {
+            const now = Date.now();
+            // Takili istek varsa uzun sure beklemeden yeni deneme yap.
+            if (veriGuncellemeDevam && (now - veriGuncellemeBaslangic) < 1200) return;
+            veriGuncellemeDevam = true;
+            veriGuncellemeBaslangic = now;
+
+            fetchJsonWithFallback([
+                '/otoparklar.json',
+                'otoparklar.json'
+            ])
+                .then(data => {
+                    const parkingList = Array.isArray(data) ? data : (Array.isArray(data?.parks) ? data.parks : []);
+                    if (!parkingList.length) {
+                        return;
+                    }
+                    let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+                    const activeIds = new Set();
+
+                    parkingList.forEach(park => {
+                        try {
+                        let parkID = park.id; 
+                        activeIds.add(parkID);
+                        parkDataById[parkID] = park;
+                        let parkIsmi = (park.status || "BOS").toUpperCase();
+                        let isBos = parkIsmi.includes("BOS") || parkIsmi.includes("BOŞ");
+                        let renk = isBos ? "#00ff44" : "#FF5A5F";
+                        let yazi = isBos ? "BOŞ" : "DOLU";
+                        
+                        if (!park || !Array.isArray(park.coords) || park.coords.length < 3) return;
+                        let merkez = koordinatMerkeziBul(park.coords);
+                        minLat = Math.min(minLat, merkez.lat);
+                        maxLat = Math.max(maxLat, merkez.lat);
+                        minLng = Math.min(minLng, merkez.lng);
+                        maxLng = Math.max(maxLng, merkez.lng);
+                        const rotasyon = 0; // Tum arac ikonlari ekranda yatay ve ayni hizada kalsin
+
+                        // Zoom'a göre yazı göster/gizle
+                        let gosterilecekYazi = yazi;
+                        
+                        // SVG oluştur
+                        let svgString = getCarSVGString(gosterilecekYazi, renk, rotasyon);
+                        // Data URI'ye çevir
+                        let svgDataUrl = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svgString);
+
+                        // Tum park ikonlari esit boyutta kalsin
+                        const w = 64;
+                        const h = 32;
+                        let icon = null;
+                        icon = new H.map.Icon(svgDataUrl, {
+                            size: { w: Math.round(w), h: Math.round(h) },
+                            anchor: { x: Math.round(w / 2), y: Math.round(h / 2) }
+                        });
+
+                        if (parkMarkers[parkID]) {
+                            let marker = parkMarkers[parkID];
+                            marker.setIcon(icon);
+                            marker.setGeometry(merkez);
+                        } else {
+                            let arabaMarker = new H.map.Marker(merkez, { icon: icon });
+                            arabaMarker.setData({ parkID: parkID });
+                            arabaMarker.addEventListener('tap', function(evt) {
+                                const d = evt.target.getData();
+                                const seciliPark = d ? parkDataById[d.parkID] : null;
+                                if (!seciliPark) return;
+                                handleMarkerClick(koordinatMerkeziBul(seciliPark.coords), seciliPark);
+                            });
+                            map.addObject(arabaMarker);
+                            parkMarkers[parkID] = arabaMarker;
+                        }
+
+                        } catch (e) {
+                            console.log("Park cizim hatasi:", e);
+                        }
+                    });
+
+                    // Artık veride olmayan markerları temizle
+                    Object.keys(parkMarkers).forEach((id) => {
+                        const numId = Number(id);
+                        if (!activeIds.has(numId) && !activeIds.has(id)) {
+                            map.removeObject(parkMarkers[id]);
+                            delete parkMarkers[id];
+                            delete parkDataById[id];
+                        }
+                    });
+                    if (!ilkHaritaOdaklandi && isFinite(minLat) && isFinite(maxLat) && isFinite(minLng) && isFinite(maxLng)) {
+                        const bounds = new H.geo.Rect(maxLat, minLng, minLat, maxLng);
+                        map.getViewModel().setLookAtData({
+                            bounds: bounds,
+                            padding: { top: 80, right: 280, bottom: 80, left: 80 }
+                        });
+                        const z = map.getZoom();
+                        if (z > 19.1) map.setZoom(19.1);
+                        if (z < 17.7) map.setZoom(17.7);
+                        map.setCenter({ lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2 });
+                        ilkHaritaOdaklandi = true;
+                    }
+                })
+                .catch(err => console.log("Veri okuma hatası:", err))
+                .finally(() => {
+                    veriGuncellemeDevam = false;
                 });
-            });
+        }
+        
+        // Tıklama işleyicisi (DomMarker içinde çağrılır)
+        function handleMarkerClick(merkez, park) {
+            seciliHedef = merkez;
+            rotaGuncelle();
+            panelGoster(park);
+
+            // Sol Üst Mini Pencereyi Aç
+            document.getElementById("nav-minipanel").style.display = "block";
+            // Mini harita gizliyken olusturuldugu icin görünür olunca yeniden boyutlandir.
+            setTimeout(() => {
+                if (miniMap) {
+                    miniMap.getViewPort().resize();
+                    miniMap.setCenter(kullaniciKonumu || varsayilanMerkez);
+                    if (miniMap.getZoom() < 18) miniMap.setZoom(18);
+                }
+            }, 0);
+            navigasyonAktif = false;
+            document.getElementById("nav-arrow").style.display = "none";
+            if(miniUserMarker) miniUserMarker.setVisibility(true);
         }
 
         // --- YARDIMCI FONKSİYONLAR ---
 
-        // NAVİGASYON BAŞLAT FONKSİYONU
         function baslatNavigasyon() {
-            alert('Navigasyon ve Takip Modu Başlatılıyor...');
-            navigasyonAktif = true;
-            
-            // Mini Haritayı Sürüş Moduna Al
-            miniMap.setZoom(19);
-            miniMap.setTilt(45);
-            miniMap.setCenter(kullaniciKonumu);
-            
-            // Oku göster
-            document.getElementById("nav-arrow").style.display = "block";
-            // Normal markeri gizle (Ok var zaten)
-            if(miniUserMarker) miniUserMarker.setVisible(false);
-        }
+            document.getElementById("nav-minipanel").style.display = "block";
+            if (miniMap) miniMap.getViewPort().resize();
+            const odaklaVeBaslat = (konum) => {
+                kullaniciKonumu = konum || kullaniciKonumu || varsayilanMerkez;
+                sonKonum = kullaniciKonumu;
+                navigasyonAktif = true;
+                updateUserMarker(map, 'main', kullaniciKonumu);
+                updateUserMarker(miniMap, 'mini', kullaniciKonumu);
+                if (miniMap) {
+                    miniMap.getViewModel().setLookAtData({
+                        center: kullaniciKonumu,
+                        zoom: 19.5,
+                        tilt: 0
+                    });
+                }
+                document.getElementById("nav-arrow").style.display = "none";
+                if (miniUserMarker) miniUserMarker.setVisibility(true);
+                if (seciliHedef) rotaGuncelle();
+            };
 
-        function getScaleByZoom(zoom) {
-            if (zoom >= 21) return 1.5; 
-            if (zoom >= 20) return 1.1;
-            if (zoom >= 19) return 0.8;
-            if (zoom >= 18) return 0.4;
-            return 0.2;
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (p) => {
+                        odaklaVeBaslat({ lat: p.coords.latitude, lng: p.coords.longitude });
+                    },
+                    () => {
+                        if (kullaniciMarker && typeof kullaniciMarker.getGeometry === "function") {
+                            const g = kullaniciMarker.getGeometry();
+                            if (g && typeof g.lat === "number" && typeof g.lng === "number") {
+                                odaklaVeBaslat({ lat: g.lat, lng: g.lng });
+                                return;
+                            }
+                        }
+                        odaklaVeBaslat(kullaniciKonumu || varsayilanMerkez);
+                    },
+                    { enableHighAccuracy: true, maximumAge: 0, timeout: GEOLOC_START_TIMEOUT_MS }
+                );
+            } else {
+                odaklaVeBaslat(kullaniciKonumu || varsayilanMerkez);
+            }
         }
 
         function parkYonuHesapla(coords) {
@@ -531,50 +862,102 @@
             return { lat: latSum / coords.length, lng: lngSum / coords.length };
         }
 
+        // HERE ROUTING API v8 Kullanımı
         function rotaGuncelle() {
-            if (!seciliHedef) return;
-            directionsService.route({
-                origin: kullaniciKonumu,
-                destination: seciliHedef,
-                travelMode: google.maps.TravelMode.DRIVING,
-                drivingOptions: {
-                    departureTime: new Date(Date.now()),
-                    trafficModel: 'bestguess'
-                }
-            }, (result, status) => {
-                if (status == 'OK') {
-                    // Ana Harita
-                    let path = result.routes[0].overview_path;
-                    path.push(new google.maps.LatLng(seciliHedef.lat, seciliHedef.lng));
-                    sariRotaCizgisi.setPath(path);
-                    
-                    if (targetMarker) targetMarker.setMap(null);
-                    targetMarker = new google.maps.Marker({
-                        position: seciliHedef,
-                        map: map,
-                        animation: google.maps.Animation.DROP
+            if (!seciliHedef || !kullaniciKonumu) return;
+
+            // Parametreler
+            const routingParameters = {
+                'routingMode': 'fast',
+                'transportMode': 'car',
+                'origin': `${kullaniciKonumu.lat},${kullaniciKonumu.lng}`,
+                'destination': `${seciliHedef.lat},${seciliHedef.lng}`,
+                'return': 'polyline'
+            };
+
+            const onResult = function(result) {
+                if (result.routes.length) {
+                    const routeSection = result.routes[0].sections[0];
+                    const linestring = H.geo.LineString.fromFlexiblePolyline(routeSection.polyline);
+                    linestring.pushPoint({ lat: seciliHedef.lat, lng: seciliHedef.lng });
+
+                    // --- ANA HARİTA ÇİZGİSİ (SARI) ---
+                    if (sariRotaCizgisi) {
+                        sariRotaCizgisi.setGeometry(linestring);
+                        sariRotaCizgisi.setZIndex(15000);
+                    } else {
+                        sariRotaCizgisi = new H.map.Polyline(linestring, {
+                            style: { lineWidth: 6, strokeColor: '#ffea00' }
+                        });
+                        sariRotaCizgisi.setZIndex(15000);
+                        map.addObject(sariRotaCizgisi);
+                    }
+
+                    // Hedef İşaretçisi (Drop Animasyonlu Basit Marker)
+                    if (targetMarker) map.removeObject(targetMarker);
+                    targetMarker = new H.map.Marker(seciliHedef, { icon: createTargetPinIcon('main') });
+                    targetMarker.setZIndex(30000);
+                    map.addObject(targetMarker);
+                    if (targetDot) map.removeObject(targetDot);
+                    targetDot = new H.map.Circle(seciliHedef, 2.0, {
+                        style: {
+                            lineWidth: 2,
+                            strokeColor: 'rgba(255,23,68,1.0)',
+                            fillColor: 'rgba(255,23,68,0.95)'
+                        }
                     });
+                    targetDot.setZIndex(30001);
+                    map.addObject(targetDot);
 
-                    // --- MİNİ HARİTA GÜNCELLEME ---
-                    miniDirectionsRenderer.setDirections(result);
 
-                    // YENİ: Mini Haritaya Hedef İşaretçisi Ekle (Kırmızı Pin)
-                    if (miniTargetMarker) miniTargetMarker.setMap(null);
-                    miniTargetMarker = new google.maps.Marker({
-                        position: seciliHedef,
-                        map: miniMap,
-                        animation: google.maps.Animation.DROP
+                    // --- MİNİ HARİTA ÇİZGİSİ (MAVİ) ---
+                    if (miniRotaCizgisi) {
+                        miniRotaCizgisi.setGeometry(linestring);
+                        miniRotaCizgisi.setZIndex(15000);
+                    } else {
+                        miniRotaCizgisi = new H.map.Polyline(linestring, {
+                            style: { lineWidth: 8, strokeColor: '#2f87ff' }
+                        });
+                        miniRotaCizgisi.setZIndex(15000);
+                        miniMap.addObject(miniRotaCizgisi);
+                    }
+
+                    // Mini Harita Hedef
+                    if (miniTargetMarker) miniMap.removeObject(miniTargetMarker);
+                    miniTargetMarker = new H.map.Marker(seciliHedef, { icon: createTargetPinIcon('mini') });
+                    miniTargetMarker.setZIndex(30000);
+                    miniMap.addObject(miniTargetMarker);
+                    if (miniTargetDot) miniMap.removeObject(miniTargetDot);
+                    miniTargetDot = new H.map.Circle(seciliHedef, 1.6, {
+                        style: {
+                            lineWidth: 2,
+                            strokeColor: 'rgba(255,23,68,1.0)',
+                            fillColor: 'rgba(255,23,68,0.95)'
+                        }
                     });
+                    miniTargetDot.setZIndex(30001);
+                    miniMap.addObject(miniTargetDot);
 
-                    // Navigasyon başlamadıysa (Genel Bakış Modu)
+                    // Navigasyon başlamadıysa sığdır
                     if (!navigasyonAktif) {
-                        const bounds = new google.maps.LatLngBounds();
-                        bounds.extend(kullaniciKonumu);
-                        bounds.extend(seciliHedef);
-                        miniMap.fitBounds(bounds);
+                         miniMap.getViewModel().setLookAtData({
+                            bounds: linestring.getBoundingBox()
+                         });
+                    } else {
+                        miniMap.getViewModel().setLookAtData({
+                            center: kullaniciKonumu,
+                            zoom: Math.max(19, miniMap.getZoom()),
+                            tilt: 0
+                        });
                     }
                 }
-            });
+            };
+
+            const onError = function(error) {
+                console.log('Rota hatası:', error);
+            };
+
+            router.calculateRoute(routingParameters, onResult, onError);
         }
 
         function mesafeHesapla(k1, k2) {
@@ -626,8 +1009,8 @@
             `;
             p.style.display = "block";
         }
-    </script>
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyD0fGnV43UcbklTRewrskSUy2ovUmE_taA&libraries=geometry&callback=initMap" async defer></script>
-</body>
 
+        window.addEventListener('load', initMap);
+    </script>
+</body>
 </html>

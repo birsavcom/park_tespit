@@ -68,25 +68,7 @@ except Exception:
 # PLAKA DB
 # =========================================================
 KNOWN_PLATES = {
-    5: "16 KCJ 5281",
-    10: "16 LSU 073",
-    13: "16 T 2650",
-    60: "16 T 0516",
-    51: "16 AJP 615",
-    64: "20 V 4281",
-    67: "16 LCR 768",
-    74: "16 TAR 88",
-    80: "16 BLB 311",
-    96: "16 T 0431",
-    178: "16 ABJ 126",
-    180: "16 NYZ 88",
-    184: "16 JE 235",
-    185: "34 SD 6576",
-    190: "16 T 1012",
-    194: "16 GA 885",
-    196: "54 ABZ 531",
-    197: "07 NCF 49",
-    236: "34 KLA 157",
+    5: "16 KCJ 5281"
 }
 
 VIP_ID = 5
@@ -330,7 +312,20 @@ RAW_MAP_TTL_FRAMES = 180
 YOLO_ROI_MARGIN_ON = 220
 YOLO_ROI_MARGIN_ARKA = 280
 PARK_BOX_HOLD_FRAMES = 12
-BOX_SMOOTH_ALPHA = 0.20
+
+# =========================================================
+# BOX SMOOTHING İYİLEŞTİRME (1 + 2)
+# =========================================================
+# 1) Hız-adaptif smoothing: araç hızlandıkça alpha artar (lag azalır)
+BOX_SMOOTH_ALPHA_BASE = 0.18     # eski: 0.20 sabitti
+BOX_SMOOTH_ALPHA_MAX  = 0.85     # hızlı hareketlerde neredeyse direkt takip
+BOX_SMOOTH_SPEED_REF  = 35.0     # px/frame ~ bu hıza gelince alpha MAX'e yaklaşır
+
+# 2) Snap: smoothing yerine direkt ölçüme geç (kaçırmayı keser)
+BOX_SNAP_IOU_THRESH   = 0.22     # prev smooth ile yeni bbox iou düşükse snap
+BOX_SNAP_CENTER_DIST  = 26.0     # merkez sıçrarsa snap (px)
+BOX_SNAP_AREA_RATIO   = 2.40     # alan bir anda çok değişirse snap
+
 SPOT_OWNER_LOCK_FRAMES = 120
 SPOT_OWNER_LOCK_DIST = 70
 SPOT_OWNER_MAX_AREA_GROWTH = 1.80
@@ -353,7 +348,6 @@ FAST_START_ONAY = 1
 VIEW_FAST_SECONDS = 3.0
 
 # “Boşalan yer dolu takılı kalma” fix (temkinli)
-# (Asıl fix: analiz artık DURMUYOR. Buna ek olarak gölge/iz için güvenli boşaltma var.)
 CLEAR_LOW = 0.085
 CLEAR_SHADOW = 0.13
 BOS_ONAY = 10
@@ -364,6 +358,58 @@ YOLO_MISS_CLEAR_FRAMES = 60
 MIN_MATCH_THRESH = 140
 HOMOGRAPHY_INTERVAL = 30
 ORB_TARGET_W = 640
+VIEW_SWITCH_GUARD_FRAMES = 30
+
+def clamp(x, lo, hi):
+    return lo if x < lo else hi if x > hi else x
+
+def bbox_iou(a, b):
+    # a,b: (x1,y1,x2,y2) float
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+    iw = max(0.0, ix2 - ix1)
+    ih = max(0.0, iy2 - iy1)
+    inter = iw * ih
+    a_area = max(1.0, (ax2 - ax1) * (ay2 - ay1))
+    b_area = max(1.0, (bx2 - bx1) * (by2 - by1))
+    return float(inter / (a_area + b_area - inter + 1e-9))
+
+def smooth_bbox_adaptive(prev_sb, curr_sb, speed_px):
+    # speed_px: px/frame
+    # hız arttıkça alpha artar
+    t = float(speed_px) / float(max(1e-6, BOX_SMOOTH_SPEED_REF))
+    alpha = BOX_SMOOTH_ALPHA_BASE + (BOX_SMOOTH_ALPHA_MAX - BOX_SMOOTH_ALPHA_BASE) * clamp(t, 0.0, 1.0)
+    b = 1.0 - alpha
+    px1, py1, px2, py2 = prev_sb
+    cx1, cy1, cx2, cy2 = curr_sb
+    return (
+        b * float(px1) + alpha * float(cx1),
+        b * float(py1) + alpha * float(cy1),
+        b * float(px2) + alpha * float(cx2),
+        b * float(py2) + alpha * float(cy2),
+    )
+
+def should_snap(prev_sb, curr_sb, speed_px):
+    if prev_sb is None:
+        return True
+    iou = bbox_iou(prev_sb, curr_sb)
+    if iou < BOX_SNAP_IOU_THRESH:
+        return True
+    if float(speed_px) > BOX_SNAP_CENTER_DIST:
+        return True
+    # alan bir anda çok zıplarsa da snap
+    px1, py1, px2, py2 = prev_sb
+    cx1, cy1, cx2, cy2 = curr_sb
+    p_area = max(1.0, (px2 - px1) * (py2 - py1))
+    c_area = max(1.0, (cx2 - cx1) * (cy2 - cy1))
+    ratio = (c_area / p_area) if p_area > 0 else 999.0
+    if ratio > BOX_SNAP_AREA_RATIO or ratio < (1.0 / BOX_SNAP_AREA_RATIO):
+        return True
+    return False
 
 def is_moving(v_id):
     if v_id not in VEHICLE_DATA or len(VEHICLE_DATA[v_id]["history"]) < 10:
@@ -666,9 +712,7 @@ for i in range(len(kml_parks)):
     elif p_arka is None:
         assigned_view[i] = "ON_CEPHE"
     else:
-        a_on = abs(cv2.contourArea(p_on.astype(np.int32)))
-        a_arka = abs(cv2.contourArea(p_arka.astype(np.int32)))
-        assigned_view[i] = "ON_CEPHE" if a_on >= a_arka else "ARKA_CEPHE"
+        assigned_view[i] = "BOTH"
 
 packs_on = []
 packs_arka = []
@@ -685,6 +729,11 @@ for i in range(len(kml_parks)):
         packs_arka.append(precompute_crop_mask(polys_arka[i]) if polys_arka[i] is not None else None)
         bboxes_on.append(None)
         bboxes_arka.append(precompute_poly_bbox(polys_arka[i]) if polys_arka[i] is not None else None)
+    elif assigned_view[i] == "BOTH":
+        packs_on.append(precompute_crop_mask(polys_on[i]) if polys_on[i] is not None else None)
+        packs_arka.append(precompute_crop_mask(polys_arka[i]) if polys_arka[i] is not None else None)
+        bboxes_on.append(precompute_poly_bbox(polys_on[i]) if polys_on[i] is not None else None)
+        bboxes_arka.append(precompute_poly_bbox(polys_arka[i]) if polys_arka[i] is not None else None)
     else:
         packs_on.append(None)
         packs_arka.append(None)
@@ -692,7 +741,7 @@ for i in range(len(kml_parks)):
         bboxes_arka.append(None)
 
 # ON cephe sol dükkan/bina için ignore çizgisi (park alanının sol sınırına göre)
-visible_on = [polys_on[i] for i in range(len(kml_parks)) if assigned_view[i] == "ON_CEPHE" and polys_on[i] is not None]
+visible_on = [polys_on[i] for i in range(len(kml_parks)) if assigned_view[i] in ("ON_CEPHE", "BOTH") and polys_on[i] is not None]
 min_x_on = 0
 if visible_on:
     min_x_on = min(int(np.min(p[:, 0])) for p in visible_on)
@@ -701,7 +750,7 @@ IGNORE_LEFT_X = X_CUTOFF_ON + 30     # bina/dükkan false-positive için ekstra 
 
 # YOLO ROI (hız)
 YOLO_ROI_ON = build_roi_from_polys(visible_on, margin=YOLO_ROI_MARGIN_ON)
-visible_arka = [polys_arka[i] for i in range(len(kml_parks)) if assigned_view[i] == "ARKA_CEPHE" and polys_arka[i] is not None]
+visible_arka = [polys_arka[i] for i in range(len(kml_parks)) if assigned_view[i] in ("ARKA_CEPHE", "BOTH") and polys_arka[i] is not None]
 YOLO_ROI_ARKA = build_roi_from_polys(visible_arka, margin=YOLO_ROI_MARGIN_ARKA)
 
 # Occupancy ROI (threshold'ü sadece burada yapacağız)
@@ -1009,38 +1058,64 @@ while True:
                 global_park_db[spot_index]["last_vehicle_seen"] = frame_sayac
                 bind_spot(spot_index, final_id, son_label, frame_sayac, cx, cy)
 
+            # -----------------------------
+            # BOX SMOOTHING (1+2) UYGULAMA
+            # -----------------------------
+            curr_bbox = (float(gx1), float(gy1), float(gx2), float(gy2))
+
+            prev_center = None
+            prev_sb = None
+            prev_area = None
+            if final_id in VEHICLE_DATA:
+                prev_center = VEHICLE_DATA[final_id].get("center")
+                prev_sb = VEHICLE_DATA[final_id].get("smooth_bbox")
+                prev_area = VEHICLE_DATA[final_id].get("last_bbox_area")
+
+            if prev_center is None:
+                prev_center = (cx, cy)
+
+            speed_px = math.sqrt((int(cx) - int(prev_center[0])) ** 2 + (int(cy) - int(prev_center[1])) ** 2)
+
+            # Snap kararı
+            snap_now = should_snap(prev_sb, curr_bbox, speed_px)
+
+            if snap_now:
+                sb = curr_bbox
+            else:
+                sb = smooth_bbox_adaptive(prev_sb, curr_bbox, speed_px)
+
+            # Frame sınırlarına kırp (güvenlik)
+            sx1, sy1, sx2, sy2 = sb
+            sx1 = clamp(sx1, 0.0, float(w - 1))
+            sy1 = clamp(sy1, 0.0, float(h - 1))
+            sx2 = clamp(sx2, 1.0, float(w))
+            sy2 = clamp(sy2, 1.0, float(h))
+            if sx2 <= sx1 + 1:
+                sx2 = min(float(w), sx1 + 2.0)
+            if sy2 <= sy1 + 1:
+                sy2 = min(float(h), sy1 + 2.0)
+            sb = (sx1, sy1, sx2, sy2)
+
             if final_id not in VEHICLE_DATA:
                 VEHICLE_DATA[final_id] = {
                     "center": (cx, cy),
                     "last_seen": frame_sayac,
                     "history": deque(maxlen=20),
-                    "smooth_bbox": (float(gx1), float(gy1), float(gx2), float(gy2)),
+                    "smooth_bbox": sb,
                     "last_bbox_area": float(box_area),
                 }
-            VEHICLE_DATA[final_id]["center"] = (cx, cy)
-            VEHICLE_DATA[final_id]["last_seen"] = frame_sayac
-            VEHICLE_DATA[final_id]["history"].append((cx, cy))
-            VEHICLE_DATA[final_id]["last_bbox_area"] = float(box_area)
-
-            prev_sb = VEHICLE_DATA[final_id].get("smooth_bbox")
-            if prev_sb is None:
-                sb = (float(gx1), float(gy1), float(gx2), float(gy2))
             else:
-                px1, py1, px2, py2 = prev_sb
-                a = BOX_SMOOTH_ALPHA
-                b = 1.0 - a
-                sb = (
-                    b * float(px1) + a * float(gx1),
-                    b * float(py1) + a * float(gy1),
-                    b * float(px2) + a * float(gx2),
-                    b * float(py2) + a * float(gy2),
-                )
-            VEHICLE_DATA[final_id]["smooth_bbox"] = sb
+                VEHICLE_DATA[final_id]["center"] = (cx, cy)
+                VEHICLE_DATA[final_id]["last_seen"] = frame_sayac
+                VEHICLE_DATA[final_id]["smooth_bbox"] = sb
+                VEHICLE_DATA[final_id]["last_bbox_area"] = float(box_area)
 
-            # Çizim
-            sx1, sy1, sx2, sy2 = [int(v) for v in VEHICLE_DATA[final_id]["smooth_bbox"]]
-            cv2.rectangle(img, (sx1, sy1), (sx2, sy2), (0, 255, 255), 2)
-            cv2.putText(img, f"ID: {final_id}", (sx1, sy1 - 10),
+            VEHICLE_DATA[final_id]["history"].append((cx, cy))
+
+            # Çizim (SMOOTH bbox ile)
+            draw_x1, draw_y1, draw_x2, draw_y2 = [int(v) for v in VEHICLE_DATA[final_id]["smooth_bbox"]]
+            cv2.rectangle(img, (draw_x1, draw_y1), (draw_x2, draw_y2), (0, 255, 255), 2)
+            cv2.putText(img, f"ID: {final_id}", (draw_x1, draw_y1 - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
             # Panel listeleri (park4 mantığı)

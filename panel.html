@@ -4,7 +4,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Bursa Akıllı Otopark - Dark Neon</title>
+    <title>Bursa Akıllı Otopark - HERE Dark Neon</title>
+    
+    <link rel="stylesheet" type="text/css" href="https://js.api.here.com/v3/3.1/mapsjs-ui.css" />
+
     <style>
         html,
         body {
@@ -18,12 +21,16 @@
 
         /* XƏRİTƏNİ QARALTMAQ VƏ NEON EFFEKTİ VERMƏK ÜÇÜN FİLTER 
            Bu hissə peyk görüntüsünü "Dark Mode" kimi göstərir.
+           HERE Maps canvas üzerinde de aynen çalışacaktır.
         */
         #map {
             height: 100%;
             width: 100%;
             touch-action: none;
-            filter: brightness(0.5) contrast(1.2) grayscale(0.2) saturate(1.2);
+            background: #000;
+        }
+        .H_map, .H_map canvas {
+            background: #000 !important;
         }
 
         #price-panel {
@@ -197,7 +204,16 @@
             letter-spacing: 2px;
             text-shadow: 0 0 5px rgba(255, 215, 0, 0.5);
         }
+        
+        /* HERE Maps Logo/Copyright Gizleme */
+        .H_copyright, .H_logo { display: none !important; }
     </style>
+    
+    <script src="https://js.api.here.com/v3/3.1/mapsjs-core.js" type="text/javascript" charset="utf-8"></script>
+    <script src="https://js.api.here.com/v3/3.1/mapsjs-service.js" type="text/javascript" charset="utf-8"></script>
+    <script src="https://js.api.here.com/v3/3.1/mapsjs-ui.js" type="text/javascript" charset="utf-8"></script>
+    <script src="https://js.api.here.com/v3/3.1/mapsjs-mapevents.js" type="text/javascript" charset="utf-8"></script>
+    <script src="https://js.api.here.com/v3/3.1/mapsjs-harp.js" type="text/javascript" charset="utf-8"></script>
 </head>
 
 <body>
@@ -207,7 +223,10 @@
 
     <script>
         const varsayilanMerkez = { lat: 40.226991369791286, lng: 28.84528824528653 };
-        let map, directionsService, directionsRenderer, sariRotaCizgisi, trafficLayer;
+        const HERE_API_KEY = 'UO-tiV8ME4AYsgMrTay0yZ7Jmy6ahf_nhURpS-h03Kw'; // API Key eklendi
+
+        let platform, map, ui, behavior, router;
+        let sariRotaCizgisi; 
         let kullaniciKonumu = varsayilanMerkez;
         let sonKonum = null;
         let seciliHedef = null;
@@ -215,40 +234,75 @@
         let kullaniciMarker = null;
 
         function initMap() {
-            map = new google.maps.Map(document.getElementById("map"), {
-                center: varsayilanMerkez,
+            // 1. Platform Başlat
+            platform = new H.service.Platform({
+                'apikey': HERE_API_KEY
+            });
+            const preferredEngine =
+                (H.Map && H.Map.EngineType && H.Map.EngineType.HARP) ? H.Map.EngineType.HARP : null;
+            const layerOpts = { lg: 'tr', pois: false };
+            if (preferredEngine) layerOpts.engineType = preferredEngine;
+            let defaultLayers = platform.createDefaultLayers(layerOpts);
+
+            const pickPanelLayer = (layers) => {
+                const v = layers && layers.vector && layers.vector.normal;
+                return (v && (v.mapnight || v.map)) || null;
+            };
+
+            let panelBaseLayer = pickPanelLayer(defaultLayers);
+            if (!panelBaseLayer) {
+                console.error("HERE base layer bulunamadi. API key veya katman yetkisini kontrol et.");
+                return;
+            }
+
+            // 2. Harita Oluştur
+            const panelMapOptions = {
                 zoom: 19,
-                mapTypeId: 'satellite',
-                // Bütün UI elementlərini gizlədirik (Şəkilə uyğun)
-                disableDefaultUI: true, 
-                gestureHandling: 'greedy',
-                // Etiketləri (POI) gizlət
-                styles: [
-                    { featureType: "poi", stylers: [{ visibility: "off" }] },
-                    { featureType: "transit", stylers: [{ visibility: "off" }] }
-                ]
-            });
+                center: varsayilanMerkez,
+                pixelRatio: window.devicePixelRatio || 1
+            };
+            if (preferredEngine) panelMapOptions.engineType = preferredEngine;
 
-            // Trafik layını əlavə et (bu qaranlıq filterin altında incə görünəcək)
-            trafficLayer = new google.maps.TrafficLayer();
-            trafficLayer.setMap(map);
+            try {
+                map = new H.Map(
+                    document.getElementById("map"),
+                    panelBaseLayer,
+                    panelMapOptions
+                );
+            } catch (e) {
+                console.warn("HARP motoru acilamadi, varsayilan motora geri donuluyor:", e);
+                defaultLayers = platform.createDefaultLayers({ lg: 'tr', pois: false });
+                panelBaseLayer = pickPanelLayer(defaultLayers);
+                if (!panelBaseLayer) {
+                    console.error("Fallback base layer da bulunamadi.");
+                    return;
+                }
+                map = new H.Map(
+                    document.getElementById("map"),
+                    panelBaseLayer,
+                    {
+                        zoom: 19,
+                        center: varsayilanMerkez,
+                        pixelRatio: window.devicePixelRatio || 1
+                    }
+                );
+            }
+            
+            // Pencere değişimini dinle
+            window.addEventListener('resize', () => map.getViewPort().resize());
 
-            directionsService = new google.maps.DirectionsService();
-            directionsRenderer = new google.maps.DirectionsRenderer({
-                map: map,
-                suppressMarkers: true,
-                suppressPolylines: true
-            });
+            // 3. Etkileşim ve UI
+            behavior = new H.mapevents.Behavior(new H.mapevents.MapEvents(map));
+            // UI'yı tamamen kapatmıyoruz ama sadeleştiriyoruz.
+            // Google kodunda disableDefaultUI: true vardı. 
+            // Burada UI oluşturmazsak zoom butonları gelmez, ki mobilde genelde istenir.
+            // Eğer hiç buton istemiyorsanız aşağıdaki satırı silebilirsiniz.
+            // ui = H.ui.UI.createDefault(map, defaultLayers); 
 
-            // Rota Xətti - NEON SARI
-            sariRotaCizgisi = new google.maps.Polyline({
-                strokeColor: "#ffea00", // Daha parlaq sarı
-                strokeOpacity: 1.0,
-                strokeWeight: 6,
-                map: map,
-                zIndex: 500
-            });
+            // 4. Routing Servisi
+            router = platform.getRoutingService(null, 8);
 
+            // 5. Kullanıcı Konum Takibi
             if (navigator.geolocation) {
                 navigator.geolocation.watchPosition(
                     (p) => {
@@ -258,86 +312,121 @@
                         kullaniciKonumu = yeniKonum;
                         sonKonum = yeniKonum;
 
-                        if (!kullaniciMarker) {
-                            kullaniciMarker = new google.maps.Marker({
-                                position: yeniKonum,
-                                map: map,
-                                icon: {
-                                    path: google.maps.SymbolPath.CIRCLE,
-                                    scale: 10,
-                                    fillColor: "#00aaff",
-                                    fillOpacity: 1,
-                                    strokeColor: "white",
-                                    strokeWeight: 3
-                                }
-                            });
-                        } else {
-                            kullaniciMarker.setPosition(yeniKonum);
-                        }
+                        updateUserMarker(yeniKonum);
 
                         if (seciliHedef) rotaGuncelle();
                     },
                     null,
                     { enableHighAccuracy: true, maximumAge: 3000 }
                 );
+            } else {
+                updateUserMarker(varsayilanMerkez);
             }
 
-            fetch('otoparklar.json').then(r => r.json()).then(data => {
-                data.forEach(park => {
-                    // Qaranlıq xəritədə görünməsi üçün parlaq NEON rənglər seçirik
-                    // Şəkildəki kimi: DOLU = Parlaq Qırmızı, BOŞ = Parlaq Yaşıl
-                    let strokeColor = park.status === "DOLU" ? "#ff003c" : "#00ff44";
-                    let fillColor = park.status === "DOLU" ? "#ff003c" : "#00ff44";
+            // 6. Verileri Çek ve Poligonları Çiz
+            const getParkingData = async () => {
+                for (const url of ['otoparklar.json', '/otoparklar.json']) {
+                    try {
+                        const sep = url.includes('?') ? '&' : '?';
+                        const r = await fetch(`${url}${sep}t=${Date.now()}`, { cache: 'no-store' });
+                        if (r.ok) return await r.json();
+                    } catch (_) {}
+                }
+                throw new Error("Otopark verisi alinamadi");
+            };
 
-                    let poly = new google.maps.Polygon({
-                        paths: park.coords,
-                        strokeColor: strokeColor,
-                        strokeOpacity: 1.0,
-                        strokeWeight: 4, // Xətt qalınlığı artırıldı
-                        fillColor: fillColor,
-                        fillOpacity: 0.1, // İçi çox şəffaf, sadəcə xətlər parlasın
-                        map: map,
-                        zIndex: 1000
+            getParkingData().then(data => {
+                data.forEach(park => {
+                    // Qaranlıq xəritədə görünməsi üçün parlaq NEON rənglər
+                    let strokeColor = park.status === "DOLU" ? "#ff003c" : "#00ff44";
+                    let fillColor = park.status === "DOLU" ? "rgba(255, 0, 60, 0.1)" : "rgba(0, 255, 68, 0.1)";
+
+                    // HERE LineString (Poligon koordinatları)
+                    let lineString = new H.geo.LineString();
+                    park.coords.forEach(c => lineString.pushPoint(c));
+
+                    let poly = new H.map.Polygon(lineString, {
+                        style: {
+                            lineWidth: 4,
+                            strokeColor: strokeColor,
+                            fillColor: fillColor
+                        }
                     });
 
-                    google.maps.event.addListener(poly, 'mousedown', function () {
-                        seciliHedef = poligonMerkeziniBul(poly);
+                    // Poligon Tıklama Olayı
+                    poly.addEventListener('tap', function(evt) {
+                        // Poligon merkezini bul (HERE kendi bounding box'ından bulur)
+                        let center = poly.getGeometry().getBoundingBox().getCenter();
+                        seciliHedef = center;
                         rotaGuncelle();
                         panelGoster(park);
                     });
+
+                    map.addObject(poly);
                 });
-            });
+            }).catch(err => console.log("Veri okuma hatasi:", err));
+        }
+
+        function updateUserMarker(coord) {
+            // Google'daki Mavi Daire Marker'ı HTML (DomMarker) ile yapıyoruz
+            if (kullaniciMarker) {
+                kullaniciMarker.setGeometry(coord);
+            } else {
+                const html = `
+                <div style="
+                    width: 20px; height: 20px;
+                    background: #00aaff;
+                    border: 3px solid white;
+                    border-radius: 50%;
+                    box-shadow: 0 0 10px rgba(0,0,0,0.5);
+                "></div>`;
+                
+                const icon = new H.map.DomIcon(html);
+                kullaniciMarker = new H.map.DomMarker(coord, { icon: icon });
+                map.addObject(kullaniciMarker);
+            }
         }
 
         function rotaGuncelle() {
             if (!seciliHedef) return;
 
-            directionsService.route({
-                origin: kullaniciKonumu,
-                destination: seciliHedef,
-                travelMode: google.maps.TravelMode.DRIVING,
-                drivingOptions: { departureTime: new Date(Date.now()), trafficModel: 'bestguess' }
-            }, (result, status) => {
-                if (status == 'OK') {
-                    let rawPath = result.routes[0].overview_path;
-                    let finalPoints = [];
+            // HERE Routing v8
+            const routingParameters = {
+                'routingMode': 'fast',
+                'transportMode': 'car',
+                'origin': `${kullaniciKonumu.lat},${kullaniciKonumu.lng}`,
+                'destination': `${seciliHedef.lat},${seciliHedef.lng}`,
+                'return': 'polyline'
+            };
 
-                    finalPoints.push(new google.maps.LatLng(kullaniciKonumu.lat, kullaniciKonumu.lng));
-                    for (let i = 0; i < rawPath.length; i++) {
-                        finalPoints.push(rawPath[i]);
+            const onResult = function(result) {
+                if (result.routes.length) {
+                    const routeSection = result.routes[0].sections[0];
+                    const linestring = H.geo.LineString.fromFlexiblePolyline(routeSection.polyline);
+
+                    // Sarı Neon Çizgi
+                    if (sariRotaCizgisi) {
+                        sariRotaCizgisi.setGeometry(linestring);
+                    } else {
+                        sariRotaCizgisi = new H.map.Polyline(linestring, {
+                            style: { lineWidth: 6, strokeColor: '#ffea00' },
+                            zIndex: 500
+                        });
+                        map.addObject(sariRotaCizgisi);
                     }
-                    finalPoints.push(new google.maps.LatLng(seciliHedef.lat, seciliHedef.lng));
 
-                    sariRotaCizgisi.setPath(finalPoints);
-
-                    if (targetMarker) targetMarker.setMap(null);
-                    targetMarker = new google.maps.Marker({
-                        position: seciliHedef,
-                        map: map,
-                        animation: google.maps.Animation.DROP
-                    });
+                    // Hedef Markeri (Pin)
+                    if (targetMarker) map.removeObject(targetMarker);
+                    targetMarker = new H.map.Marker(seciliHedef);
+                    map.addObject(targetMarker);
                 }
-            });
+            };
+
+            const onError = function(error) {
+                console.log('Rota hatası:', error);
+            };
+
+            router.calculateRoute(routingParameters, onResult, onError);
         }
 
         function mesafeHesapla(k1, k2) {
@@ -346,13 +435,6 @@
             const dLng = (k2.lng - k1.lng) * Math.PI / 180;
             const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(k1.lat * Math.PI / 180) * Math.cos(k2.lat * Math.PI / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        }
-
-        function poligonMerkeziniBul(polygon) {
-            let path = polygon.getPath();
-            let x = 0, y = 0, n = path.getLength();
-            for (let i = 0; i < n; i++) { x += path.getAt(i).lat(); y += path.getAt(i).lng(); }
-            return { lat: x / n, lng: y / n };
         }
 
         function ucretHesapla(ts) {
@@ -370,6 +452,9 @@
             const durumText = park.status || "DOLU";
             const durumClass = durumText === "BOŞ" ? "status-bos" : "status-dolu";
             const baslik = park.bolge_adi || "A-12 BÖLGESI";
+            
+            // Renk hesaplama (metin içindeki span için)
+            const ucretRengi = "#00ff44";
 
             // Şəkilə uyğun Glassmorphism Panel
             p.innerHTML = `
@@ -393,7 +478,7 @@
                     </div>
                     <div class="info-row">
                         <span class="info-label">Ücret</span>
-                        <span class="info-value" style="color: #00ff44">${res.ucret} TL</span>
+                        <span class="info-value" style="color: ${ucretRengi}">${res.ucret} TL</span>
                     </div>
                      <div class="info-row">
                         <span class="info-label">Giriş Saati</span>
@@ -411,8 +496,9 @@
 
             p.style.display = "block";
         }
+        
+        // Sayfa yüklenince haritayı başlat
+        window.addEventListener('load', initMap);
     </script>
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyD0fGnV43UcbklTRewrskSUy2ovUmE_taA&callback=initMap"
-        async defer></script>
 </body>
 </html>
