@@ -96,6 +96,15 @@ REALTIME_SOURCE_CLOCK = True
 FRAME_GET_TIMEOUT = 0.08
 READER_QUEUE_SIZE = 2
 
+# =========================================================
+# YOUTUBE ONLY (gorukle.mp4 KALKTI)
+# =========================================================
+YOUTUBE_URL = "https://www.youtube.com/watch?v=P0zZHAi4HBE"
+# Stream URL'ler zamanla expire olur. Bu yüzden belirli aralıklarla veya hata olduğunda yeniden çözümlüyoruz.
+YOUTUBE_REFRESH_SECONDS = 25 * 60  # 25 dk
+YOUTUBE_REOPEN_BACKOFF = 2.0       # read fail olursa yeniden denemeden önce bekleme
+YOUTUBE_MAX_CONSEC_FAIL = 45       # arka arkaya fail olursa stream'i yeniden çöz
+
 def set_system_state(is_running, reason=""):
     try:
         payload = {
@@ -164,36 +173,157 @@ def sistemi_otomatik_baslat():
 
 sistemi_otomatik_baslat()
 
+# =========================================================
+# YOUTUBE STREAM ÇÖZÜCÜ
+# =========================================================
+def resolve_youtube_stream_url(youtube_url: str) -> str:
+    """
+    YouTube URL -> OpenCV'nin açabileceği gerçek stream URL.
+    Gereksinim: pip install yt-dlp
+    """
+    try:
+        from yt_dlp import YoutubeDL
+    except Exception as e:
+        raise RuntimeError(
+            "yt-dlp yok. Sanal ortamda şunu çalıştır:\n"
+            "  pip install yt-dlp\n"
+            f"(Hata: {e})"
+        )
+
+    # Önce mp4 progressive / mp4 video stream dene. Olmazsa best'e düş.
+    # Not: Bazı durumlarda m3u8 gelebilir; OpenCV/FFmpeg destekliyse oynar.
+    fmt = (
+        "bestvideo[ext=mp4][vcodec!=none][protocol!=m3u8]/"
+        "best[ext=mp4][protocol!=m3u8]/"
+        "bestvideo[vcodec!=none]/best"
+    )
+
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "format": fmt,
+        "noplaylist": True,
+        "cachedir": False,
+        # Windows'ta bazı kurulumlarda çok agresif user-agent bazen işe yarar:
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        },
+    }
+
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(youtube_url, download=False)
+        # yt-dlp bazen 'url' bazen 'requested_formats' döner.
+        if not info:
+            raise RuntimeError("yt-dlp info bos geldi.")
+
+        if "url" in info and info["url"]:
+            return info["url"]
+
+        rf = info.get("requested_formats")
+        if isinstance(rf, list) and len(rf) > 0:
+            for it in rf:
+                u = it.get("url")
+                if u:
+                    return u
+
+        # fallback: formats list içinden seç
+        fmts = info.get("formats") or []
+        # Öncelik: mp4, video, http(s)
+        def score(f):
+            s = 0
+            if (f.get("ext") == "mp4"):
+                s += 50
+            if f.get("vcodec") not in (None, "none"):
+                s += 30
+            if f.get("acodec") not in (None, "none"):
+                s += 10
+            proto = (f.get("protocol") or "").lower()
+            if "m3u8" in proto:
+                s -= 10
+            if "http" in proto:
+                s += 5
+            # daha yüksek çözünürlük tercih
+            h = f.get("height") or 0
+            s += int(h / 72)
+            return s
+
+        best = None
+        best_s = -10**9
+        for f in fmts:
+            u = f.get("url")
+            if not u:
+                continue
+            sc = score(f)
+            if sc > best_s:
+                best_s = sc
+                best = u
+
+        if best:
+            return best
+
+        raise RuntimeError("Uygun stream URL bulunamadi (yt-dlp format secimi basarisiz).")
+
+class YoutubeStreamState:
+    def __init__(self, youtube_url: str):
+        self.youtube_url = youtube_url
+        self.stream_url = None
+        self.last_resolve = 0.0
+        self.lock = threading.Lock()
+
+    def get_stream_url(self, force=False) -> str:
+        with self.lock:
+            now = time.time()
+            need = force or (self.stream_url is None) or ((now - self.last_resolve) > YOUTUBE_REFRESH_SECONDS)
+        if need:
+            u = resolve_youtube_stream_url(self.youtube_url)
+            with self.lock:
+                self.stream_url = u
+                self.last_resolve = time.time()
+        with self.lock:
+            return self.stream_url
+
+# =========================================================
+# VIDEO FRAME GRABBER (STREAM RE-RESOLVE + REOPEN)
+# =========================================================
 class LatestFrameGrabber:
-    def __init__(self, source, queue_size=2, clock_fps=0.0, loop_file=False, enable_pacing=True):
-        self.source = source
-        self.loop_file = loop_file
-        self.cap = cv2.VideoCapture(source)
+    def __init__(self, yt_state: YoutubeStreamState, queue_size=2, clock_fps=0.0, enable_pacing=False):
+        self.yt_state = yt_state
+        self.queue = queue.Queue(maxsize=max(1, queue_size))
+        self.stop_event = threading.Event()
+        self.thread = None
+
+        self.cap = None
+        self.eos = False
+        self.dropped = 0
+        self.consec_fail = 0
+
+        self.clock_fps = float(clock_fps) if clock_fps and clock_fps > 1.0 else 0.0
+        self.frame_dt = (1.0 / self.clock_fps) if self.clock_fps > 1.0 else 0.0
+        # YouTube canlı stream: pacing genelde gereksiz; ama senin pipeline için clock lazım olabilir.
+        self.use_pacing = bool(enable_pacing) and self.frame_dt > 0
+
+        self._open_capture(force_resolve=True)
+
+    def _open_capture(self, force_resolve=False):
+        try:
+            if self.cap is not None:
+                self.cap.release()
+        except Exception:
+            pass
+
+        stream_url = self.yt_state.get_stream_url(force=force_resolve)
+        self.cap = cv2.VideoCapture(stream_url)
         try:
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         except Exception:
             pass
-
-        self.queue = queue.Queue(maxsize=max(1, queue_size))
-        self.stop_event = threading.Event()
-        self.thread = None
+        self.consec_fail = 0
         self.eos = False
-        self.dropped = 0
-
-        sfps = self.cap.get(cv2.CAP_PROP_FPS)
-        if not sfps or sfps < 5 or sfps > 120:
-            sfps = 25.0
-        self.source_fps = float(sfps)
-
-        fc = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
-        self.is_file_source = bool(fc and fc > 0)
-
-        self.clock_fps = float(clock_fps) if clock_fps and clock_fps > 1.0 else self.source_fps
-        self.frame_dt = 1.0 / max(1.0, self.clock_fps)
-        self.use_pacing = bool(enable_pacing) and self.is_file_source and self.frame_dt > 0
 
     def is_opened(self):
-        return bool(self.cap.isOpened())
+        return bool(self.cap is not None and self.cap.isOpened())
 
     def start(self):
         self.thread = threading.Thread(target=self._reader_loop, daemon=True)
@@ -203,16 +333,27 @@ class LatestFrameGrabber:
     def _reader_loop(self):
         next_tick = time.perf_counter()
         while not self.stop_event.is_set():
-            ok, frame = self.cap.read()
-            if not ok:
-                if self.loop_file:
-                    self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    continue
-                self.eos = True
-                time.sleep(0.01)
+            if self.cap is None or (not self.cap.isOpened()):
+                # yeniden aç
+                time.sleep(YOUTUBE_REOPEN_BACKOFF)
+                self._open_capture(force_resolve=True)
                 continue
 
+            ok, frame = self.cap.read()
+            if not ok or frame is None:
+                self.consec_fail += 1
+                # stream url expire / bağlantı düşmesi
+                if self.consec_fail >= YOUTUBE_MAX_CONSEC_FAIL:
+                    # önce aynı stream ile reopen dene, sonra resolve zorla
+                    time.sleep(YOUTUBE_REOPEN_BACKOFF)
+                    self._open_capture(force_resolve=True)
+                else:
+                    time.sleep(0.01)
+                continue
+
+            self.consec_fail = 0
             self.eos = False
+
             if self.use_pacing:
                 next_tick += self.frame_dt
                 remain = next_tick - time.perf_counter()
@@ -237,6 +378,7 @@ class LatestFrameGrabber:
             frame = self.queue.get(timeout=timeout)
         except queue.Empty:
             return None
+        # sadece en yeniyi döndür
         while True:
             try:
                 frame = self.queue.get_nowait()
@@ -248,7 +390,11 @@ class LatestFrameGrabber:
         self.stop_event.set()
         if self.thread is not None:
             self.thread.join(timeout=1.0)
-        self.cap.release()
+        try:
+            if self.cap is not None:
+                self.cap.release()
+        except Exception:
+            pass
 
 class AsyncJsonWriter:
     def __init__(self, path):
@@ -290,7 +436,6 @@ class AsyncJsonWriter:
         self.event.set()
         self.thread.join(timeout=1.0)
 
-
 # =========================================================
 # 2) AYARLAR
 # =========================================================
@@ -314,17 +459,15 @@ YOLO_ROI_MARGIN_ARKA = 280
 PARK_BOX_HOLD_FRAMES = 12
 
 # =========================================================
-# BOX SMOOTHING İYİLEŞTİRME (1 + 2)
+# BOX SMOOTHING İYİLEŞTİRME
 # =========================================================
-# 1) Hız-adaptif smoothing: araç hızlandıkça alpha artar (lag azalır)
-BOX_SMOOTH_ALPHA_BASE = 0.18     # eski: 0.20 sabitti
-BOX_SMOOTH_ALPHA_MAX  = 0.85     # hızlı hareketlerde neredeyse direkt takip
-BOX_SMOOTH_SPEED_REF  = 35.0     # px/frame ~ bu hıza gelince alpha MAX'e yaklaşır
+BOX_SMOOTH_ALPHA_BASE = 0.18
+BOX_SMOOTH_ALPHA_MAX  = 0.85
+BOX_SMOOTH_SPEED_REF  = 35.0
 
-# 2) Snap: smoothing yerine direkt ölçüme geç (kaçırmayı keser)
-BOX_SNAP_IOU_THRESH   = 0.22     # prev smooth ile yeni bbox iou düşükse snap
-BOX_SNAP_CENTER_DIST  = 26.0     # merkez sıçrarsa snap (px)
-BOX_SNAP_AREA_RATIO   = 2.40     # alan bir anda çok değişirse snap
+BOX_SNAP_IOU_THRESH   = 0.22
+BOX_SNAP_CENTER_DIST  = 26.0
+BOX_SNAP_AREA_RATIO   = 2.40
 
 SPOT_OWNER_LOCK_FRAMES = 120
 SPOT_OWNER_LOCK_DIST = 70
@@ -338,7 +481,7 @@ def choose_imgsz(roi_w, roi_h):
         return 448
     return 512
 
-# Park doluluk - park4 ile uyumlu
+# Park doluluk
 OCC_WEAK = 0.11
 ONAY_SAYISI = 15
 ANALYZE_EVERY = 3
@@ -347,7 +490,6 @@ FAST_START_SECONDS = 1.0
 FAST_START_ONAY = 1
 VIEW_FAST_SECONDS = 3.0
 
-# “Boşalan yer dolu takılı kalma” fix (temkinli)
 CLEAR_LOW = 0.085
 CLEAR_SHADOW = 0.13
 BOS_ONAY = 10
@@ -364,7 +506,6 @@ def clamp(x, lo, hi):
     return lo if x < lo else hi if x > hi else x
 
 def bbox_iou(a, b):
-    # a,b: (x1,y1,x2,y2) float
     ax1, ay1, ax2, ay2 = a
     bx1, by1, bx2, by2 = b
     ix1 = max(ax1, bx1)
@@ -379,8 +520,6 @@ def bbox_iou(a, b):
     return float(inter / (a_area + b_area - inter + 1e-9))
 
 def smooth_bbox_adaptive(prev_sb, curr_sb, speed_px):
-    # speed_px: px/frame
-    # hız arttıkça alpha artar
     t = float(speed_px) / float(max(1e-6, BOX_SMOOTH_SPEED_REF))
     alpha = BOX_SMOOTH_ALPHA_BASE + (BOX_SMOOTH_ALPHA_MAX - BOX_SMOOTH_ALPHA_BASE) * clamp(t, 0.0, 1.0)
     b = 1.0 - alpha
@@ -401,7 +540,6 @@ def should_snap(prev_sb, curr_sb, speed_px):
         return True
     if float(speed_px) > BOX_SNAP_CENTER_DIST:
         return True
-    # alan bir anda çok zıplarsa da snap
     px1, py1, px2, py2 = prev_sb
     cx1, cy1, cx2, cy2 = curr_sb
     p_area = max(1.0, (px2 - px1) * (py2 - py1))
@@ -446,7 +584,6 @@ def pick_spot_id(spot_idx, view_label, cx, cy, dist_limit):
     if not rec:
         return None
 
-    # Ayni fiziksel spot, cephe degisse de ayni kimligi korusun.
     if rec.get("view") != str(view_label):
         return int(rec["sid"])
 
@@ -664,40 +801,54 @@ def masked_ratio_from_thresh_roi(thresh_roi, pack, ox, oy):
     return count / clip_area
 
 # =========================================================
-# 4) VIDEO / DB HAZIRLIK
+# 4) VIDEO / DB HAZIRLIK (YOUTUBE)
 # =========================================================
-video_source = "gorukle.mp4"
 json_writer = AsyncJsonWriter("otoparklar.json").start() if USE_ASYNC_JSON else None
 
-probe = cv2.VideoCapture(video_source)
-if not probe.isOpened():
-    print(f"HATA: Video kaynagi acilamadi: {video_source}")
+# YouTube stream çöz
+yt_state = YoutubeStreamState(YOUTUBE_URL)
+
+try:
+    stream_url = yt_state.get_stream_url(force=True)
+except Exception as e:
+    print(f"HATA: YouTube stream cozulmedi: {e}")
     sys.exit(1)
+
+# FPS probe (YouTube stream'de CAP_PROP_FPS bazen 0 gelir -> fallback)
+probe = cv2.VideoCapture(stream_url)
+if not probe.isOpened():
+    print(f"HATA: Stream acilamadi (probe). YouTube link/yt-dlp/ffmpeg kontrol et.")
+    sys.exit(1)
+
 source_fps = probe.get(cv2.CAP_PROP_FPS)
 if not source_fps or source_fps < 5 or source_fps > 120:
-    source_fps = 25.0
+    # YouTube'da çoğunlukla 25/30/50/60; fallback verelim
+    source_fps = 30.0
 probe.release()
 
 target_fps = TARGET_FPS_OVERRIDE if TARGET_FPS_OVERRIDE > 0 else source_fps
 clock_fps = min(source_fps, target_fps) if REALTIME_SOURCE_CLOCK else target_fps
+
 grabber = LatestFrameGrabber(
-    video_source,
+    yt_state,
     queue_size=READER_QUEUE_SIZE,
     clock_fps=clock_fps,
-    loop_file=False,
     enable_pacing=ENABLE_FRAME_PACING,
 ).start()
 homography_worker = AsyncHomographyWorker().start()
 
-if not grabber.is_opened():
-    print(f"HATA: Video kaynagi acilamadi: {video_source}")
-    sys.exit(1)
-
+print(f">>> Video source (YouTube): {YOUTUBE_URL}")
+print(f">>> Source FPS: {source_fps} | target_fps: {target_fps} | clock_fps: {clock_fps}")
+print(f">>> Grabber opened: {grabber.is_opened()} | is_file_source: False")
 print(f">>> Hedef FPS: {target_fps:.1f}")
+
+if not grabber.is_opened():
+    print("HATA: Stream acilamadi. (OpenCV/FFmpeg/yt-dlp)")
+    sys.exit(1)
 
 kml_parks = get_kml_coords("Birsav_akilli_park.kml")
 
-# Poligonları 1 kez hesapla (HUGE hız)
+# Poligonları 1 kez hesapla
 polys_on = [compute_view_poly(k, H_ON) for k in kml_parks]
 polys_arka = [compute_view_poly(k, H_ARKA) for k in kml_parks]
 
@@ -740,24 +891,20 @@ for i in range(len(kml_parks)):
         bboxes_on.append(None)
         bboxes_arka.append(None)
 
-# ON cephe sol dükkan/bina için ignore çizgisi (park alanının sol sınırına göre)
 visible_on = [polys_on[i] for i in range(len(kml_parks)) if assigned_view[i] in ("ON_CEPHE", "BOTH") and polys_on[i] is not None]
 min_x_on = 0
 if visible_on:
     min_x_on = min(int(np.min(p[:, 0])) for p in visible_on)
-X_CUTOFF_ON = max(0, min_x_on - 40)  # biraz agresif
-IGNORE_LEFT_X = X_CUTOFF_ON + 30     # bina/dükkan false-positive için ekstra güvenlik
+X_CUTOFF_ON = max(0, min_x_on - 40)
+IGNORE_LEFT_X = X_CUTOFF_ON + 30
 
-# YOLO ROI (hız)
 YOLO_ROI_ON = build_roi_from_polys(visible_on, margin=YOLO_ROI_MARGIN_ON)
 visible_arka = [polys_arka[i] for i in range(len(kml_parks)) if assigned_view[i] in ("ARKA_CEPHE", "BOTH") and polys_arka[i] is not None]
 YOLO_ROI_ARKA = build_roi_from_polys(visible_arka, margin=YOLO_ROI_MARGIN_ARKA)
 
-# Occupancy ROI (threshold'ü sadece burada yapacağız)
 OCC_ROI_ON = build_roi_from_polys(visible_on, margin=300)
 OCC_ROI_ARKA = build_roi_from_polys(visible_arka, margin=300)
 
-# Park DB
 global_park_db = []
 for i, kml_poly in enumerate(kml_parks):
     global_park_db.append(
@@ -802,16 +949,28 @@ view_fast_until = 0.0
 dyn_imgsz = 512
 loop_t0 = time.perf_counter()
 shutdown_reason = "stopped"
+
 set_system_state(True, "running")
-atexit.register(set_system_state, False, "process_exit")
+
+def _atexit_state():
+    try:
+        set_system_state(False, "process_exit")
+    except Exception:
+        pass
+
+atexit.register(_atexit_state)
 
 while True:
     img = grabber.get_latest(timeout=FRAME_GET_TIMEOUT)
+
+    # YouTube'da bazen kısa süre frame gelmeyebilir. None ise direkt döngü devam.
     if img is None:
-        if grabber.eos:
-            print(">>> Video bitti. Sistem kapaniyor.")
-            shutdown_reason = "video_finished"
-            break
+        # Uzun süre hiç frame gelmiyorsa, stream'i tazelemek için zorla resolve tetikleyelim:
+        # (Reader thread zaten fail sayınca yapıyor, ama burada da ek güvenlik)
+        continue
+
+    # Güvenlik: bazı durumlarda frame bozuk gelebilir
+    if not isinstance(img, np.ndarray) or img.size == 0:
         continue
 
     img = cv2.resize(img, (FRAME_W, FRAME_H))
@@ -824,7 +983,6 @@ while True:
     now_ts = time.perf_counter()
     fast_start_mode = (now_ts - loop_t0) <= FAST_START_SECONDS
 
-    # Cephe kontrol (seyrek, asenkron)
     if frame_sayac == 1 or frame_sayac % HOMOGRAPHY_INTERVAL == 1:
         homography_worker.submit(img)
 
@@ -835,7 +993,6 @@ while True:
             active_H, son_label = new_H, new_label
         elif new_label == "BELIRSIZ":
             active_H, son_label = None, new_label
-        # GECIS ise son_label korunur
 
     if prev_son_label is None and son_label in ("ON_CEPHE", "ARKA_CEPHE"):
         prev_son_label = son_label
@@ -848,7 +1005,6 @@ while True:
 
     view_fast_mode = now_ts < view_fast_until
 
-    # Aktif poligon/mask ve ROI seç
     if son_label == "ON_CEPHE":
         yolo_roi = YOLO_ROI_ON
         occ_roi = OCC_ROI_ON
@@ -889,7 +1045,6 @@ while True:
                 p["poly_bbox"] = None
             last_view_label = son_label
 
-    # YOLO ROI kırp
     rx1, ry1, rx2, ry2 = yolo_roi
     rx1 = max(0, min(rx1, w - 1))
     ry1 = max(0, min(ry1, h - 1))
@@ -901,9 +1056,6 @@ while True:
         rx1, ry1, rx2, ry2 = (0, 0, w, h)
         roi_img = img
 
-    # =====================================================
-    # YOLO TRACK (stride ile hız)
-    # =====================================================
     yolo_update = (frame_sayac % YOLO_STRIDE == 0) or (last_yolo_results is None)
     roi_h, roi_w = roi_img.shape[:2]
     dyn_imgsz = choose_imgsz(roi_w, roi_h)
@@ -965,14 +1117,12 @@ while True:
             cx, cy = (gx1 + gx2) // 2, (gy1 + gy2) // 2
             box_area = max(1, (gx2 - gx1) * (gy2 - gy1))
 
-            # ON cephe sol dükkan/bina ignore (box + ID yok)
             if son_label == "ON_CEPHE" and cx < IGNORE_LEFT_X:
                 continue
 
             final_id = None
             spot_index = -1
 
-            # Park içi?
             for p_idx, p_data in enumerate(global_park_db):
                 poly = p_data["poly_video"]
                 if poly is None:
@@ -988,9 +1138,7 @@ while True:
                     break
 
             raw = int(r_id)
-            spot_owner_blocked = False
 
-            # 1) Park ici: spot hafizasi her zaman once gelir.
             if spot_index != -1:
                 owner_rec = SPOT_OCCUPANT.get(int(spot_index))
                 owner_sid = None
@@ -1015,12 +1163,7 @@ while True:
                     final_id = int(mem)
                 elif owner_recent and owner_sid is not None and owner_dist_ok and owner_area_ok:
                     final_id = int(owner_sid)
-                elif owner_recent:
-                    # Spot sahibini koru: gecici on-plan gecisinde ID calinmasin.
-                    spot_owner_blocked = True
-                    spot_index = -1
 
-            # 2) Raw map sadece yakin zamanda gorulen kimliklerde kullanilsin.
             if final_id is None and raw in current_id_map:
                 cand = int(current_id_map[raw])
                 cand_recent = (
@@ -1032,11 +1175,9 @@ while True:
                 else:
                     current_id_map.pop(raw, None)
 
-            # 3) Park ici hala bulunamadiysa deterministik fallback.
             if final_id is None and spot_index != -1:
                 final_id = int(spot_index) + 1
 
-            # 4) Park disi: sadece alt %65 bolgede yeni ID.
             if final_id is None:
                 if cy > limit_line_y:
                     final_id = NEXT_SHOW_ID
@@ -1058,33 +1199,25 @@ while True:
                 global_park_db[spot_index]["last_vehicle_seen"] = frame_sayac
                 bind_spot(spot_index, final_id, son_label, frame_sayac, cx, cy)
 
-            # -----------------------------
-            # BOX SMOOTHING (1+2) UYGULAMA
-            # -----------------------------
             curr_bbox = (float(gx1), float(gy1), float(gx2), float(gy2))
 
             prev_center = None
             prev_sb = None
-            prev_area = None
             if final_id in VEHICLE_DATA:
                 prev_center = VEHICLE_DATA[final_id].get("center")
                 prev_sb = VEHICLE_DATA[final_id].get("smooth_bbox")
-                prev_area = VEHICLE_DATA[final_id].get("last_bbox_area")
 
             if prev_center is None:
                 prev_center = (cx, cy)
 
             speed_px = math.sqrt((int(cx) - int(prev_center[0])) ** 2 + (int(cy) - int(prev_center[1])) ** 2)
 
-            # Snap kararı
             snap_now = should_snap(prev_sb, curr_bbox, speed_px)
-
             if snap_now:
                 sb = curr_bbox
             else:
                 sb = smooth_bbox_adaptive(prev_sb, curr_bbox, speed_px)
 
-            # Frame sınırlarına kırp (güvenlik)
             sx1, sy1, sx2, sy2 = sb
             sx1 = clamp(sx1, 0.0, float(w - 1))
             sy1 = clamp(sy1, 0.0, float(h - 1))
@@ -1112,13 +1245,11 @@ while True:
 
             VEHICLE_DATA[final_id]["history"].append((cx, cy))
 
-            # Çizim (SMOOTH bbox ile)
             draw_x1, draw_y1, draw_x2, draw_y2 = [int(v) for v in VEHICLE_DATA[final_id]["smooth_bbox"]]
             cv2.rectangle(img, (draw_x1, draw_y1), (draw_x2, draw_y2), (0, 255, 255), 2)
             cv2.putText(img, f"ID: {final_id}", (draw_x1, draw_y1 - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
-            # Panel listeleri (park4 mantığı)
             if spot_index != -1:
                 current_frame_parked.append(final_id)
                 park_plate = KNOWN_PLATES.get(final_id, "[...]")
@@ -1132,12 +1263,10 @@ while True:
                         GLOBAL_PARKED_REGISTRY[final_id] = {"plate": park_plate, "start_time": None}
                     if park_plate != "[...]":
                         GLOBAL_PARKED_REGISTRY[final_id]["plate"] = park_plate
-
             else:
                 if cy > limit_line_y and is_moving(final_id):
                     current_frame_moving.append(final_id)
 
-    # Kisa sureli kacirmalarda kutuyu tut (flicker azaltma).
     for hold_id, st in VEHICLE_DATA.items():
         if hold_id in seen_ids_this_frame:
             continue
@@ -1152,9 +1281,6 @@ while True:
         cv2.putText(img, f"ID: {hold_id}", (hx1, hy1 - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 240, 240), 2)
 
-    # =====================================================
-    # PARK DOLULUK (ARTIK DURMUYOR + ROI threshold)
-    # =====================================================
     analyze_every_now = 1 if (fast_start_mode or view_fast_mode) else ANALYZE_EVERY
     occ_shards_now = 1 if (fast_start_mode or view_fast_mode) else OCC_SHARDS
     onay_now = FAST_START_ONAY if (fast_start_mode or view_fast_mode) else ONAY_SAYISI
@@ -1196,6 +1322,7 @@ while True:
         should_write_json = (fast_start_mode or view_fast_mode) or (frame_sayac % JSON_WRITE_EVERY == 0)
         json_output = [] if should_write_json else None
         occ_shard = (frame_sayac // analyze_every_now) % occ_shards_now
+
         for p in global_park_db:
             poly = p["poly_video"]
             pack = p["mask_pack"]
@@ -1213,13 +1340,11 @@ while True:
 
             ratio = masked_ratio_from_thresh_roi(thresh, pack, ox1, oy1)
             if ratio is not None:
-                # park4 mantığı (dolu sayacı)
                 if ratio > OCC_WEAK:
                     p["dolu_sayaci"] += 1
                 else:
                     p["dolu_sayaci"] = 0
 
-                # gölge/iz için güvenli BOS sayacı (yalnızca DOLU iken)
                 yolo_recent = (frame_sayac - p["last_vehicle_seen"]) <= YOLO_RECENT_TTL
                 yolo_miss_long = (frame_sayac - p["last_vehicle_seen"]) >= YOLO_MISS_CLEAR_FRAMES
 
@@ -1233,9 +1358,6 @@ while True:
                 else:
                     p["bos_sayaci"] = 0
 
-                # Durum makinasi:
-                # - BOS -> DOLU: dolu_sayaci onayi ile
-                # - DOLU -> BOS: yalnizca guvenli bos_sayaci onayi ile
                 if p["status"] == "DOLU":
                     yeni_durum = "DOLU"
                     if p["bos_sayaci"] >= BOS_ONAY:
@@ -1267,16 +1389,16 @@ while True:
                         f.write(json_text)
                 LAST_JSON_TEXT = json_text
 
-    # =====================================================
-    # ÇİZİM / PANELLER
-    # =====================================================
     for p in global_park_db:
         if p["poly_video"] is not None:
             cv2.polylines(img, [p["poly_video"]], True, p["color"], 2)
 
+    # img None olamaz; yine de ultra güvenlik:
+    if img is None:
+        continue
+
     overlay = img.copy()
 
-    # SOL ALT PANEL: PARK HALİNDE
     cv2.rectangle(overlay, (0, h - 250), (330, h), (0, 0, 0), -1)
     cv2.putText(overlay, "PARK HALINDE", (10, h - 220),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
@@ -1304,7 +1426,6 @@ while True:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
         y_pos += 25
 
-    # SAĞ ALT PANEL: OKUNAN PLAKA
     cv2.rectangle(overlay, (w - 300, h - 250), (w, h), (0, 0, 0), -1)
     cv2.putText(overlay, "OKUNAN PLAKA", (w - 290, h - 220),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
@@ -1320,7 +1441,6 @@ while True:
 
     cv2.addWeighted(overlay, 0.6, img, 0.4, 0, img)
 
-    # Ust bilgi: sadece cephe etiketi
     if son_label == "ON_CEPHE":
         view_text = "ON CEPHE"
         text_color = (0, 255, 0)
